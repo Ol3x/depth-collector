@@ -1,2 +1,2 @@
-LLM agents are allowed to modify anything except README.md, AGENTS.md.
+LLM agents are allowed to modify anything except AGENTS.md.
 

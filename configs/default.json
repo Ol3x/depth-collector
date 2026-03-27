@@ -1,0 +1,46 @@
+{
+  "project": {
+    "name": "default",
+    "description": "Indoor-first exploratory build",
+    "max_dist": 100.0,
+    "train_val_split": 0.95
+  },
+  "runtime": {
+    "processing_fraction": 0.01,
+    "shuffle_seed": 0,
+    "resume": true,
+    "skip_known_errors": true,
+    "write_error_traces": true,
+    "target_shard_size_gb": 1.0
+  },
+  "output": {
+    "root_data_dir": "data",
+    "raw_subdir_name": "raw",
+    "processed_subdir_name": "processed",
+    "state_subdir_name": "state",
+    "metadata_filename": "metadata.json"
+  },
+  "datasets": {
+    "nyu_depth_v2": {
+      "enabled": false,
+      "hf_dataset_id": "sayakpaul/nyu_depth_v2"
+    },
+    "hypersim": {
+      "enabled": false,
+      "hf_dataset_id": "GaussianWorld/Hypersim"
+    },
+    "tartanair": {
+      "enabled": true,
+      "hf_dataset_id": "theairlabcmu/tartanair",
+      "environments": [
+        "neighborhood"
+      ],
+      "difficulties": [
+        "Easy"
+      ],
+      "modalities": [
+        "image_left"
+      ]
+    }
+  }
+}

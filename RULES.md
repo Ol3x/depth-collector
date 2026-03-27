@@ -1,41 +1,103 @@
-The project needs to use one micromamba environment that will be named depth-collector.
+# Rules
 
-As much as possible, using external libraries should be avoided.
+This file defines implementation constraints that should remain stable across the project.
 
-Most of the data processing should be done using numpy only.
+## Environment And Dependencies
 
-A lot of things will be configurable, but ALL the config for one pipeline project should be contained in one unique file (for now we will use only a default config file).
+- The project should use one micromamba environment named `depth-collector`.
+- External libraries should be minimized.
+- Most data processing should rely on `numpy`.
+- Additional dependencies should only be introduced when they remove substantial complexity or risk.
 
-The code should use abstract classes as possible to define the pipeline and preprocessing logic.
+## Configuration
 
-There will be an abstract DatasetPipeline class that we'll use for all datasets (MegaDepth, Hypersim, etc).
+- One pipeline project should be configured from one unique config file.
+- One config corresponds to one multi-dataset project.
+- For the current phase, the repository should support one default config file.
+- Development-time partial processing must be configurable through that same config.
+- The config must include `max_dist`, the maximum representable camera distance.
 
-For each dataset, the concrete class should implement methods to
+## Core Abstractions
 
-- download the data using hugging face hub
-- extract the data and remove archives
-- process the data using numpy
-- store the data as pytorch tensor contained in .pt shards, contained in .tar files, according to the webdataset format
+- The codebase should define abstract classes for shared pipeline behavior whenever that improves consistency.
+- There should be an abstract `DatasetPipeline` base class used by all dataset integrations.
+- Dataset-specific implementations should override well-defined lifecycle methods rather than inventing custom end-to-end flows.
+- Reusable camera-model and geometry functions should be shared across pipelines instead of reimplemented per dataset.
 
-EXTREMELY IMPORTANT : for all datasets, the data should be in DISTANCE TO THE CAMERA format, not depth. To achieve that, depending on the camera model of the dataset, different operations may be done to compute the distance to the camera.
+## Required Dataset Pipeline Responsibilities
 
-In general, consider that two different "samples" can have different height and width.
+Every concrete dataset pipeline should implement logic to:
 
-One sample will always consist of :
+- download source data, preferably through Hugging Face Hub when available
+- extract or materialize source files and remove no-longer-needed archives when appropriate
+- process source samples into the canonical representation using `numpy`-centric logic
+- store processed outputs as PyTorch `.pt` payloads packaged into WebDataset `.tar` shards
 
-- a (H,W,3) image in RGB order
-- a (H,W,1) distance grid
-- a (H,W,3) ray directions tensor
+Concrete pipelines should delegate generic geometry operations to shared utilities whenever possible. Examples include:
 
-In general, datasets folders should contain a metadata.json file indicating the number of shards as well as suggested training and validation files (based on a train_val_split config number between 0 and 1) and number of files per shard.
+- generating unit `ray_dir` for standard camera models such as pinhole
+- generating unit `ray_dir` for spherical or panoramic camera models
+- converting z-depth into radial distance
+- converting disparity or stereo-derived depth into canonical distance when source calibration is sufficient
 
-In general, shards should hold 1GB of data.
+## Canonical Geometry Rule
 
-Such that, for each pixel, the 3D point corresponds to the distance along the ray, obtained via the product pts = dist * ray_dir.
+This is the most important invariant in the repository.
 
-Each dataset will have a specific folder that will contain : 
-- raw
-- processed
-    - files
-        - .tar shards
-    - metadata.json
+- All processed targets must represent distance to the camera, not dataset-specific raw depth unless both are truly equivalent.
+- Conversion into distance-to-camera format may require dataset-specific camera-model handling.
+- `ray_dir` must be expressed in the camera coordinate frame with convention left, down, forward.
+- `ray_dir` must be normalized if the reconstruction rule `point = distance * ray_dir` is used.
+- `distance` values must be clipped or mapped so they do not exceed `max_dist`.
+- Infinite-depth regions, including sky when present, must be represented at distance `max_dist`.
+- For every valid pixel, the corresponding 3D point must be reconstructible as `point = distance * ray_dir`.
+
+## Invalid Data Handling
+
+- The canonical output should not include a validity mask for now.
+- Pipelines may repair invalid data only when the repair is well justified by dataset semantics or auxiliary annotations.
+- If a sample contains invalid data that cannot be repaired meaningfully, it should be excluded from processed outputs.
+- Excluded items should be recorded in persistent error files or logs.
+- Error tracking should exist for download, extraction, and processing stages.
+- Error records should include at least the file or item that caused the error and the associated error message.
+
+## Canonical Sample Structure
+
+One processed sample must contain:
+
+- one RGB image with shape `(H, W, 3)`
+- one distance grid with shape `(H, W, 1)`
+- one ray-direction tensor with shape `(H, W, 3)`
+
+Different samples may have different `H` and `W`.
+
+## Processed Dataset Layout
+
+All datasets should live under `data/`.
+
+Each dataset should use this local structure:
+
+- `data/<dataset_name>/raw/`
+- `data/<dataset_name>/processed/files/`
+- `data/<dataset_name>/processed/metadata.json`
+
+## Sharding And Metadata
+
+- Processed data should be written as `.tar` shards in WebDataset format.
+- Shards should target roughly 1 GB each unless a concrete constraint requires otherwise.
+- Each processed dataset should include a `metadata.json` file.
+- Metadata should include at least:
+  - number of shards
+  - number of files or samples per shard
+  - suggested training and validation splits derived from a `train_val_split` config value
+
+## Development Workflow Constraint
+
+- During development, agents should download and process only a configurable fraction of a dataset.
+- The implementation must still be structured so the same code path can scale to full-dataset processing.
+
+## Interruption Tolerance
+
+- The processing system should be designed to tolerate interruptions.
+- Pipelines should persist enough state to avoid re-downloading, re-extracting, or re-processing completed work unnecessarily.
+- Pipelines should also persist information about files or samples that repeatedly fail so that known errors are not retried blindly.
