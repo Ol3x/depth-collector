@@ -18,7 +18,8 @@ The configuration should expose at least:
 - project name
 - global `max_dist`
 - global `train_val_split`
-- global processing fraction
+- global `download_ratio`
+- global `process_ratio`
 - dataset enablement map
 
 ## Required Runtime Controls
@@ -43,9 +44,22 @@ Optional dataset-local fields should be allowed, but they should remain scoped i
 The shared runtime should be able to assume:
 
 - one config corresponds to one multi-dataset project
+- the project directory on disk is derived from `project.name`
 - `max_dist` is global
 - disabled datasets can be ignored without side effects
 - dataset-local config is passed only to the matching pipeline
+
+## Reconciliation Expectation
+
+Running a stage with a config should make the repository state agree with that config as far as the stage is responsible.
+
+That means:
+
+- stage state files support resumability but do not override missing required artifacts
+- if a required archive or extracted directory is missing, the runtime should regenerate it even when stale state says the unit is complete
+- if the artifact exists but the state marker is missing, the runtime may heal the state automatically
+
+The config defines desired state. Persistent state files help reach that state efficiently; they do not redefine it.
 
 ## Validation Expectations
 
@@ -53,6 +67,13 @@ The config layer should eventually validate at least:
 
 - required top-level sections exist
 - required fields have correct basic types
-- `processing_fraction` is in a valid range
+- `download_ratio` is in a valid range
+- `process_ratio` is in a valid range
 - `train_val_split` is in a valid range
 - `max_dist` is strictly positive
+
+The shared sample validator should enforce at least:
+
+- image values are finite and lie in `[0, 1]`
+- distance values are finite and lie in `[0, max_dist]`
+- `ray_dir` values are finite and normalized

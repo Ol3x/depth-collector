@@ -24,7 +24,11 @@ def load_config(path: str | Path) -> RootConfig:
     data = json.loads(config_path.read_text())
 
     project = ProjectConfig(**data["project"])
-    runtime = RuntimeConfig(**data["runtime"])
+    runtime_payload = dict(data["runtime"])
+    runtime_payload.setdefault("download_workers", 2)
+    if "process_ratio" not in runtime_payload and "processing_fraction" in runtime_payload:
+        runtime_payload["process_ratio"] = runtime_payload.pop("processing_fraction")
+    runtime = RuntimeConfig(**runtime_payload)
     output = OutputConfig(**data["output"])
     datasets = {
         name: _parse_dataset_config(dataset_data)

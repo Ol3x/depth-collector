@@ -50,7 +50,8 @@ This section should control execution behavior.
 
 Likely fields:
 
-- `processing_fraction`
+- `download_ratio`
+- `process_ratio`
 - `shuffle_seed`
 - `resume`
 - `skip_known_errors`
@@ -59,7 +60,8 @@ Likely fields:
 
 ### Notes
 
-- `processing_fraction` should support development-time partial processing
+- `download_ratio` should support development-time partial download passes
+- `process_ratio` should support development-time partial processing on already-downloaded data
 - `resume` should default toward interruption-tolerant behavior
 - `skip_known_errors` should default toward not retrying known-bad items blindly
 
@@ -117,7 +119,8 @@ project:
   train_val_split: 0.95
 
 runtime:
-  processing_fraction: 0.01
+  download_ratio: 0.01
+  process_ratio: 0.01
   shuffle_seed: 0
   resume: true
   skip_known_errors: true
@@ -149,7 +152,8 @@ These should stay project-wide unless there is a compelling later need otherwise
 - `train_val_split`
 - shard target size
 - resume policy
-- default processing fraction
+- default download ratio
+- default process ratio
 
 Keeping these global reduces ambiguity in the canonical corpus definition.
 

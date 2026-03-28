@@ -34,8 +34,20 @@ class ProcessingStateStore(ABC):
     def mark_complete(self, item_id: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def clear(self) -> None:
+        raise NotImplementedError
+
 
 class ErrorStore(ABC):
     @abstractmethod
+    def has_matching_record(self, error: ErrorRecord) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
     def record(self, error: ErrorRecord) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def remove_stages(self, stages: set[str]) -> int:
         raise NotImplementedError

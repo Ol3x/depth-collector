@@ -5,6 +5,9 @@ This file defines implementation constraints that should remain stable across th
 ## Environment And Dependencies
 
 - The project should use one micromamba environment named `depth-collector`.
+- Repository commands and tests should be run explicitly from that environment.
+- The environment definition should live in `environment.yml`.
+- The repository should expose a `dc` console command from that environment.
 - External libraries should be minimized.
 - Most data processing should rely on `numpy`.
 - Additional dependencies should only be introduced when they remove substantial complexity or risk.
@@ -13,16 +16,28 @@ This file defines implementation constraints that should remain stable across th
 
 - One pipeline project should be configured from one unique config file.
 - One config corresponds to one multi-dataset project.
+- The project directory on disk should be derived from that config via `project.name`.
 - For the current phase, the repository should support one default config file.
 - Development-time partial processing must be configurable through that same config.
 - The config must include `max_dist`, the maximum representable camera distance.
+
+## Config-State Reconciliation
+
+- When a user runs a stage script with a given config, the repository should move the on-disk state toward satisfying that config.
+- Persistent state files are hints for resumability, not the source of truth over actual required artifacts.
+- If a state file says a unit is complete but the required archive or extracted files are missing, the stage should redo the missing work.
+- If the required artifact exists but the matching state entry is missing, the state may be healed automatically.
+- The practical rule is: filesystem reality and the current config take precedence over stale resumability markers.
 
 ## Core Abstractions
 
 - The codebase should define abstract classes for shared pipeline behavior whenever that improves consistency.
 - There should be an abstract `DatasetPipeline` base class used by all dataset integrations.
+- The codebase may define abstract family pipelines between `DatasetPipeline` and concrete pipelines when several datasets share a source-family structure.
 - Dataset-specific implementations should override well-defined lifecycle methods rather than inventing custom end-to-end flows.
 - Reusable camera-model and geometry functions should be shared across pipelines instead of reimplemented per dataset.
+- Concrete pipelines should not depend on, call into, or subclass other concrete pipelines.
+- Shared behavior between related concrete pipelines should live in utilities or abstract family pipeline classes instead.
 
 ## Required Dataset Pipeline Responsibilities
 
@@ -65,21 +80,27 @@ This is the most important invariant in the repository.
 
 One processed sample must contain:
 
-- one RGB image with shape `(H, W, 3)`
+- one RGB image with shape `(H, W, 3)` and values in `[0, 1]`
 - one distance grid with shape `(H, W, 1)`
 - one ray-direction tensor with shape `(H, W, 3)`
 
 Different samples may have different `H` and `W`.
 
+All three tensors must contain only finite values.
+
 ## Processed Dataset Layout
 
-All datasets should live under `data/`.
+All projects should live under `data/`.
 
-Each dataset should use this local structure:
+Each config-defined multi-dataset project should have its own directory:
 
-- `data/<dataset_name>/raw/`
-- `data/<dataset_name>/processed/files/`
-- `data/<dataset_name>/processed/metadata.json`
+- `data/<project_name>/`
+
+Each dataset within that project should use this local structure:
+
+- `data/<project_name>/<dataset_name>/raw/`
+- `data/<project_name>/<dataset_name>/processed/files/`
+- `data/<project_name>/<dataset_name>/processed/metadata.json`
 
 ## Sharding And Metadata
 

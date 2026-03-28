@@ -6,7 +6,9 @@
     "train_val_split": 0.95
   },
   "runtime": {
-    "processing_fraction": 0.01,
+    "download_ratio": 0.01,
+    "download_workers": 2,
+    "process_ratio": 0.01,
     "shuffle_seed": 0,
     "resume": true,
     "skip_known_errors": true,
@@ -40,6 +42,25 @@
       ],
       "modalities": [
         "image_left"
+      ]
+    },
+    "tartanground": {
+      "enabled": true,
+      "hf_dataset_id": "theairlabcmu/TartanGround",
+      "environments": [
+        "AbandonedCable"
+      ],
+      "versions": [
+        "omni"
+      ],
+      "trajectories": [
+        "P0000"
+      ],
+      "camera_names": [
+        "lcam_front"
+      ],
+      "modalities": [
+        "image"
       ]
     }
   }

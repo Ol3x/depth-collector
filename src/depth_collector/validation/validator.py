@@ -30,6 +30,11 @@ class CanonicalSampleValidator:
 
         if not np.isfinite(sample.image).all():
             issues.append(ValidationIssue("image_finite", "image contains non-finite values", "error"))
+        if sample.image.size > 0:
+            if float(np.min(sample.image)) < 0.0:
+                issues.append(ValidationIssue("image_range_low", "image contains values below 0", "error"))
+            if float(np.max(sample.image)) > 1.0 + 1e-6:
+                issues.append(ValidationIssue("image_range_high", "image contains values above 1", "error"))
         if not np.isfinite(sample.distance).all():
             issues.append(ValidationIssue("distance_finite", "distance contains non-finite values", "error"))
         if not np.isfinite(sample.ray_dir).all():

@@ -17,6 +17,7 @@ class DatasetPaths:
     processed_files: Path
     state: Path
     metadata: Path
+    run_report: Path
 
 
 @dataclass(frozen=True)

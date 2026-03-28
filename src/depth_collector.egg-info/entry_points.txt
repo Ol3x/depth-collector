@@ -1,0 +1,2 @@
+[console_scripts]
+dc = depth_collector.cli:main

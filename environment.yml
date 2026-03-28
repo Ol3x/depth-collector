@@ -1,0 +1,12 @@
+name: depth-collector
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - pytorch
+  - pillow
+  - pytest
+  - huggingface_hub
+  - tqdm
