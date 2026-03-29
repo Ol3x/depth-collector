@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
-import math
 import json
+import math
+import os
 from pathlib import Path
+import shutil
 import sys
 import time
 import traceback
@@ -65,13 +68,20 @@ class DatasetPipeline(ABC):
     def reset_source_selection_cache(self) -> None:
         self._selected_source_items_cache = None
 
+    def is_metric_scale(self) -> bool:
+        return True
+
+    def scale_group_name(self) -> str:
+        return "metric" if self.is_metric_scale() else "relative"
+
     def _build_paths(self) -> DatasetPaths:
         project_root = Path(self.config.output.root_data_dir) / self.config.project.name
-        root = project_root / self.dataset_name
+        root = project_root / self.scale_group_name() / self.dataset_name
         processed = root / self.config.output.processed_subdir_name
         return DatasetPaths(
             root=root,
             raw=root / self.config.output.raw_subdir_name,
+            hf_cache=root / ".hf_cache",
             processed=processed,
             processed_files=processed / "files",
             state=root / self.config.output.state_subdir_name,
@@ -97,6 +107,89 @@ class DatasetPipeline(ABC):
             self.paths.state,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def use_hf_cache(self) -> Iterator[None]:
+        self.paths.hf_cache.mkdir(parents=True, exist_ok=True)
+        hub_cache = self.paths.hf_cache / "hub"
+        hub_cache.mkdir(parents=True, exist_ok=True)
+        prior_env = {
+            "HF_HOME": os.environ.get("HF_HOME"),
+            "HF_HUB_CACHE": os.environ.get("HF_HUB_CACHE"),
+            "HUGGINGFACE_HUB_CACHE": os.environ.get("HUGGINGFACE_HUB_CACHE"),
+        }
+        os.environ["HF_HOME"] = str(self.paths.hf_cache)
+        os.environ["HF_HUB_CACHE"] = str(hub_cache)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(hub_cache)
+        try:
+            yield
+        finally:
+            for key, value in prior_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def clear_hf_cache(self) -> bool:
+        if not self.paths.hf_cache.exists():
+            return False
+        shutil.rmtree(self.paths.hf_cache)
+        return True
+
+    def hf_list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
+        from huggingface_hub import list_repo_files
+
+        with self.use_hf_cache():
+            return list(list_repo_files(repo_id=repo_id, repo_type=repo_type))
+
+    def hf_hub_download(
+        self,
+        *,
+        repo_id: str,
+        filename: str,
+        repo_type: str = "dataset",
+        revision: str | None = None,
+        local_dir: str | Path | None = None,
+    ) -> Path:
+        from huggingface_hub import hf_hub_download
+
+        with self.use_hf_cache():
+            return Path(
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    repo_type=repo_type,
+                    revision=revision,
+                    local_dir=None if local_dir is None else str(local_dir),
+                )
+            )
+
+    def hf_snapshot_download(
+        self,
+        *,
+        repo_id: str,
+        repo_type: str = "dataset",
+        revision: str | None = None,
+        local_dir: str | Path | None = None,
+        allow_patterns: list[str] | None = None,
+        tqdm_class: type[object] | None = None,
+    ) -> Path:
+        from huggingface_hub import snapshot_download
+
+        kwargs: dict[str, object] = {
+            "repo_id": repo_id,
+            "repo_type": repo_type,
+            "revision": revision,
+        }
+        if local_dir is not None:
+            kwargs["local_dir"] = str(local_dir)
+        if allow_patterns is not None:
+            kwargs["allow_patterns"] = allow_patterns
+        if tqdm_class is not None:
+            kwargs["tqdm_class"] = tqdm_class
+
+        with self.use_hf_cache():
+            return Path(snapshot_download(**kwargs))
 
     def run_download_stage(self) -> None:
         selected_units = self._iter_selected_download_units()
@@ -197,14 +290,13 @@ class DatasetPipeline(ABC):
         return str(item)
 
     def _iter_selected_download_units(self) -> list[object]:
-        units = list(self.enumerate_download_units())
-        if not units:
-            return []
-        selected_count = max(1, math.ceil(len(units) * self.config.runtime.download_ratio))
-        return units[:selected_count]
+        return list(self.enumerate_download_units())
 
     def get_selected_download_units(self) -> list[object]:
         return self._iter_selected_download_units()
+
+    def is_partial_download_build(self) -> bool:
+        return len(self.get_selected_download_units()) < len(list(self.enumerate_download_units()))
 
     def _should_process_item(self, item_id: str) -> bool:
         fraction = self.config.runtime.process_ratio

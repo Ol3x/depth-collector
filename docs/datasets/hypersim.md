@@ -10,8 +10,12 @@
 - Artifact risk: low in principle, but HF packaging still needs inspection
 - Canonical conversion difficulty: medium
 - License: not clearly documented on the HF page reviewed
-- Status: candidate, gated
+- Status: initial pipeline implemented, gated HF validation still pending
 - Priority tier: P0
 - Why it matters: high-value indoor geometry target with strong scale potential
 - Known issues: HF repository is gated and has no dataset card, so packaging details are not yet clear
-- Pipeline notes: only worth prioritizing if the HF mirror preserves scene-level camera metadata and intrinsics information
+- Pipeline notes:
+  - the current repo now includes an initial Hypersim scene pipeline
+  - it assumes per-scene archives preserve `_detail/metadata_scene.csv`, camera keyframe positions/orientations, and per-frame HDF5 geometry files
+  - the current conversion path derives canonical rays from world positions plus camera pose and scene scale, rather than trusting image-plane intrinsics alone
+  - Hypersim camera convention is treated as right, up, backward and converted into the repo convention left, down, forward

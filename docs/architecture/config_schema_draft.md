@@ -50,7 +50,7 @@ This section should control execution behavior.
 
 Likely fields:
 
-- `download_ratio`
+- dataset-specific complete-unit count keys such as `environment_count`, `scene_count`, or `bundle_count`
 - `process_ratio`
 - `shuffle_seed`
 - `resume`
@@ -60,7 +60,7 @@ Likely fields:
 
 ### Notes
 
-- `download_ratio` should support development-time partial download passes
+- dataset-specific complete-unit count keys should support development-time reduced download passes without selecting partial units
 - `process_ratio` should support development-time partial processing on already-downloaded data
 - `resume` should default toward interruption-tolerant behavior
 - `skip_known_errors` should default toward not retrying known-bad items blindly
@@ -91,7 +91,7 @@ Likely shared fields per dataset:
 - `hf_dataset_id`
 - `revision`
 - `split` or `splits`
-- `download_fraction_override`
+- candidate-unit lists such as `environments`, `scenes`, or `bundles`
 - `notes`
 
 Not every dataset will use every field, but the shape should remain recognizable across integrations.
@@ -119,7 +119,6 @@ project:
   train_val_split: 0.95
 
 runtime:
-  download_ratio: 0.01
   process_ratio: 0.01
   shuffle_seed: 0
   resume: true

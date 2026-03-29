@@ -19,7 +19,10 @@ The implementation will likely need persistent state such as:
 - shard write checkpoints
 - error registries
 
-These artifacts may live per dataset under `data/<project_name>/<dataset_name>/state/`.
+These artifacts may live per dataset under either:
+
+- `data/<project_name>/metric/<dataset_name>/state/`
+- `data/<project_name>/relative/<dataset_name>/state/`
 
 Error registries should be stage-aware and should record, at minimum, the failing file or item and the error message.
 

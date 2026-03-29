@@ -3,6 +3,7 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 import zipfile
 
 import numpy as np
@@ -18,7 +19,7 @@ class TartanGroundPipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        download_ratio: float = 1.0,
+        environment_count: int = 1,
         process_ratio: float = 1.0,
     ) -> dict[str, object]:
         return {
@@ -29,7 +30,6 @@ class TartanGroundPipelineTest(unittest.TestCase):
                 "train_val_split": 0.95,
             },
             "runtime": {
-                "download_ratio": download_ratio,
                 "download_workers": 2,
                 "process_ratio": process_ratio,
                 "shuffle_seed": 0,
@@ -50,6 +50,7 @@ class TartanGroundPipelineTest(unittest.TestCase):
                     "enabled": True,
                     "hf_dataset_id": "theairlabcmu/TartanGround",
                     "environments": ["AbandonedCable"],
+                    "environment_count": environment_count,
                     "versions": ["omni"],
                     "trajectories": ["P0000"],
                     "camera_names": ["lcam_front"],
@@ -100,6 +101,68 @@ class TartanGroundPipelineTest(unittest.TestCase):
             units = list(pipeline.enumerate_download_units())
             self.assertEqual(
                 units,
+                [
+                    TartanGroundArchiveUnit(
+                        environment="AbandonedCable",
+                        version="omni",
+                        trajectory="P0000",
+                        modality="image",
+                        camera_name="lcam_front",
+                    ),
+                    TartanGroundArchiveUnit(
+                        environment="AbandonedCable",
+                        version="omni",
+                        trajectory="P0000",
+                        modality="depth",
+                        camera_name="lcam_front",
+                    ),
+                ],
+            )
+
+    def test_all_selectors_discover_remote_archive_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            pipeline.dataset_config.options["environments"] = "*"
+            pipeline.dataset_config.options["versions"] = "*"
+            pipeline.dataset_config.options["trajectories"] = "*"
+            pipeline.dataset_config.options["camera_names"] = "*"
+            with patch.object(
+                pipeline,
+                "_list_hf_files",
+                return_value=[
+                    "EnvB/Data_diff/P0001/image_lcam_right.zip",
+                    "EnvA/Data_omni/P0000/image_lcam_front.zip",
+                    "EnvA/Data_omni/P0000/depth_lcam_front.zip",
+                ],
+            ):
+                units = list(pipeline.enumerate_download_units())
+            self.assertEqual(
+                units,
+                [
+                    TartanGroundArchiveUnit(
+                        environment="EnvA",
+                        version="omni",
+                        trajectory="P0000",
+                        modality="image",
+                        camera_name="lcam_front",
+                    ),
+                    TartanGroundArchiveUnit(
+                        environment="EnvA",
+                        version="omni",
+                        trajectory="P0000",
+                        modality="depth",
+                        camera_name="lcam_front",
+                    ),
+                ],
+            )
+
+    def test_environment_count_applies_to_complete_group_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            pipeline.dataset_config.options["versions"] = ["omni", "diff"]
+            selected_units = list(pipeline.enumerate_download_units())
+            self.assertEqual(
+                selected_units,
                 [
                     TartanGroundArchiveUnit(
                         environment="AbandonedCable",

@@ -1,0 +1,30 @@
+# WMGStereo
+
+- Dataset: `princeton-vl/WMGStereo`
+- Reviewed: 2026-03-27
+- Hugging Face: https://huggingface.co/datasets/princeton-vl/WMGStereo
+- Domain: synthetic stereo scenes across `flying`, `nature`, and `indoor` categories
+- Projection: standard perspective stereo cameras
+- Scale signal: high
+- Geometry assessment: promising synthetic stereo supervision with rich procedural diversity, but object sizes can be unusual enough that this project should currently treat it as relative rather than confirmed metric
+- Artifact risk: likely low to medium; procedural generation should keep depth/disparity clean, but semantic realism and scene scale realism are not guaranteed
+- Canonical conversion difficulty: medium
+- License: not yet confirmed from the reviewed HF page
+- Status: implemented as three concrete relative-scale pipelines
+- Priority tier: watchlist / exploratory
+- Why it matters: useful stereo-derived supervision source and a good fit for shared family-pipeline reuse across multiple subdomains
+- Known issues:
+  - current project stance is to keep it under `relative/` rather than `metric/`
+  - unusual procedural object scales reduce confidence in treating the recovered depth as globally meaningful metric supervision
+  - exact HF archive naming/layout should still be verified against broader real samples beyond the initial implementation assumptions
+- HF packaging notes:
+  - one shared HF repo is used for all three concrete project datasets: `wmg_stereo_flying`, `wmg_stereo_nature`, and `wmg_stereo_indoor`
+  - the current implementation assumes category-specific `.tar.gz` archives under a release directory such as `release_full/<category>/...`
+- Geometry notes:
+  - the pipeline reconstructs left-camera z-depth from disparity plus left/right camera calibration
+  - that z-depth is then converted into canonical radial distance with the shared pinhole-ray path
+  - outputs are normalized into `[0, 1]`, with far / invalid regions mapped to the max bucket
+- Pipeline notes:
+  - shared logic lives in a `WMGStereoPipeline` family class
+  - concrete wrappers exist for `flying`, `nature`, and `indoor`
+  - all three variants use the same HF dataset ID but remain separate dataset names inside this project

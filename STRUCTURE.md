@@ -47,7 +47,12 @@ The intended rule is:
 
 Each config-defined multi-dataset project should live under `data/<project_name>/`.
 
-Each dataset within that project should then live under `data/<project_name>/<dataset_name>/` with this local structure:
+Each dataset within that project should then live under either:
+
+- `data/<project_name>/metric/<dataset_name>/`
+- `data/<project_name>/relative/<dataset_name>/`
+
+with this local structure:
 
 - `raw/`: downloaded archives or extracted original assets
 - `processed/files/`: exported `.tar` shards
@@ -61,6 +66,7 @@ This layout encodes a project-level philosophy:
 - one config corresponds to one multi-dataset project
 - one project gets one top-level directory under `data/`
 - datasets live inside that project directory instead of sharing one flat global namespace
+- metric and non-metric datasets are separated explicitly at the directory level
 
 That separation keeps different projects from colliding on resumability state, raw archives, extracted files, and processed outputs.
 

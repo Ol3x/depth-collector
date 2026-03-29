@@ -56,7 +56,6 @@ class MainScriptsSmokeTest(unittest.TestCase):
                 "train_val_split": 0.95,
             },
             "runtime": {
-                "download_ratio": 1e-12,
                 "download_workers": 2,
                 "process_ratio": 1e-12,
                 "shuffle_seed": 0,
@@ -78,9 +77,46 @@ class MainScriptsSmokeTest(unittest.TestCase):
                     "hf_dataset_id": "theairlabcmu/tartanair",
                     "download_workers": 1,
                     "environments": ["neighborhood"],
+                    "environment_count": 1,
                     "difficulties": ["Easy"],
                     "modalities": ["image_left"],
                     "local_archive_root": str(source_root),
+                }
+            },
+        }
+        config_path.write_text(json.dumps(payload))
+
+    def _write_megadepth_config(self, config_path: Path, data_root: Path) -> None:
+        payload = {
+            "project": {
+                "name": "default",
+                "description": "megadepth config failure smoke test",
+                "max_dist": 100.0,
+                "train_val_split": 0.95,
+            },
+            "runtime": {
+                "download_workers": 1,
+                "process_ratio": 0.05,
+                "shuffle_seed": 0,
+                "resume": True,
+                "skip_known_errors": True,
+                "write_error_traces": True,
+                "target_shard_size_gb": 1.0,
+            },
+            "output": {
+                "root_data_dir": str(data_root),
+                "raw_subdir_name": "raw",
+                "processed_subdir_name": "processed",
+                "state_subdir_name": "state",
+                "metadata_filename": "metadata.json",
+            },
+            "datasets": {
+                "megadepth": {
+                    "enabled": True,
+                    "hf_dataset_id": "MegaDepth",
+                    "bundles": ["megadepth_bundle"],
+                    "bundle_count": 1,
+                    "scene_info_dir": "scene_info",
                 }
             },
         }
@@ -107,9 +143,12 @@ class MainScriptsSmokeTest(unittest.TestCase):
             )
             self.assertIn("[tartanair] download workers: 1", download_result.stdout)
 
-            raw_root = data_root / "default" / "tartanair" / "raw" / "neighborhood" / "Easy"
+            raw_root = data_root / "default" / "metric" / "tartanair" / "raw" / "neighborhood" / "Easy"
+            hf_cache_root = data_root / "default" / "metric" / "tartanair" / ".hf_cache"
             self.assertTrue((raw_root / "image_left.zip").exists())
             self.assertTrue((raw_root / "depth_left.zip").exists())
+            (hf_cache_root / "hub").mkdir(parents=True, exist_ok=True)
+            (hf_cache_root / "hub" / "placeholder.txt").write_text("cache")
 
             subprocess.run(
                 [self._dc(), "extract", "default", "--config", str(config_path)],
@@ -121,6 +160,19 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertTrue((raw_root / "depth_left" / "P000" / "000000_left_depth.npy").exists())
             self.assertFalse((raw_root / "image_left.zip").exists())
             self.assertFalse((raw_root / "depth_left.zip").exists())
+            self.assertFalse(hf_cache_root.exists())
+
+            (hf_cache_root / "hub").mkdir(parents=True, exist_ok=True)
+            (hf_cache_root / "hub" / "placeholder.txt").write_text("cache")
+            extract_keep_cache_result = subprocess.run(
+                [self._dc(), "extract", "default", "--config", str(config_path), "--keep-cache"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("skip extract", extract_keep_cache_result.stdout)
+            self.assertTrue(hf_cache_root.exists())
 
             status_result = subprocess.run(
                 [self._dc(), "status", "default", "--config", str(config_path)],
@@ -146,8 +198,11 @@ class MainScriptsSmokeTest(unittest.TestCase):
                 text=True,
             )
             self.assertIn("visualization summary", visualize_result.stdout)
-            visualization_paths = sorted((data_root / "default" / "tartanair" / "visualizations").glob("*.png"))
+            visualization_paths = sorted(
+                (data_root / "default" / "metric" / "tartanair" / "visualizations").rglob("*.png")
+            )
             self.assertEqual(len(visualization_paths), 1)
+            self.assertEqual(visualization_paths[0].parent.name, "neighborhood__Easy")
 
             visualize_all_result = subprocess.run(
                 [self._dc(), "visualize", "default", "--config", str(config_path), "--all", "--samples-per-image", "1"],
@@ -167,7 +222,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertNotEqual(conflict_result.returncode, 0)
             self.assertIn("either --all or --max-samples", conflict_result.stderr)
 
-            shard_paths = sorted((data_root / "default" / "tartanair" / "processed" / "files").glob("*.tar"))
+            shard_paths = sorted((data_root / "default" / "metric" / "tartanair" / "processed" / "files").glob("*.tar"))
             self.assertEqual(len(shard_paths), 2)
             self.assertEqual([path.name for path in shard_paths], ["shard-000000.tar", "shard-000001.tar"])
             with tarfile.open(shard_paths[0], "r") as archive:
@@ -182,8 +237,8 @@ class MainScriptsSmokeTest(unittest.TestCase):
                 ],
             )
 
-            metadata = json.loads((data_root / "default" / "tartanair" / "processed" / "metadata.json").read_text())
-            run_report = json.loads((data_root / "default" / "tartanair" / "processed" / "run_report.json").read_text())
+            metadata = json.loads((data_root / "default" / "metric" / "tartanair" / "processed" / "metadata.json").read_text())
+            run_report = json.loads((data_root / "default" / "metric" / "tartanair" / "processed" / "run_report.json").read_text())
             self.assertEqual(metadata["valid_sample_count"], 1)
             self.assertEqual(metadata["shard_count"], 2)
             self.assertEqual(metadata["suggested_train_shards"], [shard_paths[0].name])
@@ -200,7 +255,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             )
             self.assertIn("all selected source items were already processed", no_op_process_result.stdout)
             metadata_after_no_op = json.loads(
-                (data_root / "default" / "tartanair" / "processed" / "metadata.json").read_text()
+                (data_root / "default" / "metric" / "tartanair" / "processed" / "metadata.json").read_text()
             )
             self.assertEqual(metadata_after_no_op["shard_count"], 2)
 
@@ -213,9 +268,9 @@ class MainScriptsSmokeTest(unittest.TestCase):
             )
             self.assertIn("removed process artifacts", clean_process_result.stdout)
             self.assertTrue((raw_root / "image_left" / "P000" / "000000_left.png").exists())
-            self.assertFalse((data_root / "default" / "tartanair" / "processed").exists())
-            self.assertFalse((data_root / "default" / "tartanair" / "state" / "processed.jsonl").exists())
-            self.assertFalse((data_root / "default" / "tartanair" / "state" / "enumeration_manifest.json").exists())
+            self.assertFalse((data_root / "default" / "metric" / "tartanair" / "processed").exists())
+            self.assertFalse((data_root / "default" / "metric" / "tartanair" / "state" / "processed.jsonl").exists())
+            self.assertFalse((data_root / "default" / "metric" / "tartanair" / "state" / "enumeration_manifest.json").exists())
 
             rebuilt_process_result = subprocess.run(
                 [self._dc(), "process", "default", "--config", str(config_path)],
@@ -224,15 +279,15 @@ class MainScriptsSmokeTest(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            rebuilt_shard_paths = sorted((data_root / "default" / "tartanair" / "processed" / "files").glob("*.tar"))
+            rebuilt_shard_paths = sorted((data_root / "default" / "metric" / "tartanair" / "processed" / "files").glob("*.tar"))
             self.assertEqual(len(rebuilt_shard_paths), 2)
 
-            manifest_path = data_root / "default" / "tartanair" / "state" / "enumeration_manifest.json"
+            manifest_path = data_root / "default" / "metric" / "tartanair" / "state" / "enumeration_manifest.json"
             manifest_payload = json.loads(manifest_path.read_text())
             group_payload = manifest_payload["groups"]["neighborhood/Easy"]
             group_payload["items"] = []
             manifest_path.write_text(json.dumps(manifest_payload))
-            shutil.rmtree(data_root / "default" / "tartanair" / "processed")
+            shutil.rmtree(data_root / "default" / "metric" / "tartanair" / "processed")
             recovered_process_result = subprocess.run(
                 [self._dc(), "process", "default", "--config", str(config_path)],
                 cwd=repo_root,
@@ -241,17 +296,38 @@ class MainScriptsSmokeTest(unittest.TestCase):
                 text=True,
             )
             self.assertIn("retrying source enumeration because extracted files exist", recovered_process_result.stdout)
-            recovered_shard_paths = sorted((data_root / "default" / "tartanair" / "processed" / "files").glob("*.tar"))
+            recovered_shard_paths = sorted((data_root / "default" / "metric" / "tartanair" / "processed" / "files").glob("*.tar"))
             self.assertEqual(len(recovered_shard_paths), 2)
 
             self.assertEqual(
-                sorted(path.name for path in (data_root / "default" / "tartanair" / "processed").glob("*.partial")),
+                sorted(path.name for path in (data_root / "default" / "metric" / "tartanair" / "processed").glob("*.partial")),
                 [],
             )
             self.assertEqual(
-                sorted(path.name for path in (data_root / "default" / "tartanair" / "state").glob("*.partial")),
+                sorted(path.name for path in (data_root / "default" / "metric" / "tartanair" / "state").glob("*.partial")),
                 [],
             )
+
+    def test_download_reports_megadepth_selection_failure_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            data_root = root / "data"
+            configs_root = root / "configs"
+            configs_root.mkdir(parents=True, exist_ok=True)
+            config_path = configs_root / "default.json"
+            self._write_megadepth_config(config_path, data_root)
+
+            repo_root = self._repo_root()
+            result = subprocess.run(
+                [self._dc(), "download", "default", "--config", str(config_path)],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("[megadepth] download summary: downloaded=0 skipped=0 failed=1", result.stdout)
+            self.assertNotIn("Traceback", result.stdout)
+            self.assertFalse((data_root / "default" / "relative" / "megadepth" / "raw" / "prep_scene_info").exists())
 
 
 if __name__ == "__main__":

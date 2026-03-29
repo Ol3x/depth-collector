@@ -13,6 +13,7 @@ from depth_collector.config import DatasetConfig, RootConfig
 class DatasetPaths:
     root: Path
     raw: Path
+    hf_cache: Path
     processed: Path
     processed_files: Path
     state: Path

@@ -10,3 +10,4 @@ dependencies:
   - pytest
   - huggingface_hub
   - tqdm
+  - h5py

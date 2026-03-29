@@ -4,6 +4,7 @@ import io
 from pathlib import Path
 import tarfile
 import sys
+import re
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -57,50 +58,90 @@ def create_contact_sheet(
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: list[Path] = []
-    for start in range(0, len(samples), samples_per_image):
-        chunk = samples[start : start + samples_per_image]
-        if not chunk:
-            continue
-        panel_iterator = _progress(chunk, desc=f"{dataset_name} render", unit="sample")
-        panels = [_build_sample_panel(sample) for sample in panel_iterator]
-        columns = max(1, min(sample_columns, len(panels)))
-        rows = int(np.ceil(len(panels) / columns))
-        panel_width = max(panel.width for panel in panels)
-        panel_height = max(panel.height for panel in panels)
-        gap_x = 16
-        gap_y = 16
-        width = columns * panel_width + gap_x * max(0, columns - 1)
-        total_height = rows * panel_height + gap_y * max(0, rows - 1)
-        canvas = Image.new("RGB", (width, total_height), color=(245, 245, 245))
-        for index, panel in enumerate(panels):
-            row = index // columns
-            col = index % columns
-            offset_x = col * (panel_width + gap_x)
-            offset_y = row * (panel_height + gap_y)
-            canvas.paste(panel, (offset_x, offset_y))
-        output_path = output_dir / f"{dataset_name}-visualization-{start // samples_per_image:03d}.png"
-        canvas.save(output_path)
-        output_paths.append(output_path)
+    grouped_samples = _group_samples_for_visualization(samples)
+    for group_name, group_samples in grouped_samples.items():
+        group_output_dir = output_dir / _sanitize_path_component(group_name)
+        group_output_dir.mkdir(parents=True, exist_ok=True)
+        for start in range(0, len(group_samples), samples_per_image):
+            chunk = group_samples[start : start + samples_per_image]
+            if not chunk:
+                continue
+            panel_iterator = _progress(chunk, desc=f"{dataset_name} render", unit="sample")
+            panels = [_build_sample_panel(sample) for sample in panel_iterator]
+            columns = max(1, min(sample_columns, len(panels)))
+            rows = int(np.ceil(len(panels) / columns))
+            panel_width = max(panel.width for panel in panels)
+            panel_height = max(panel.height for panel in panels)
+            gap_x = 16
+            gap_y = 16
+            width = columns * panel_width + gap_x * max(0, columns - 1)
+            total_height = rows * panel_height + gap_y * max(0, rows - 1)
+            canvas = Image.new("RGB", (width, total_height), color=(245, 245, 245))
+            for index, panel in enumerate(panels):
+                row = index // columns
+                col = index % columns
+                offset_x = col * (panel_width + gap_x)
+                offset_y = row * (panel_height + gap_y)
+                canvas.paste(panel, (offset_x, offset_y))
+            output_path = group_output_dir / f"{dataset_name}-visualization-{start // samples_per_image:03d}.png"
+            canvas.save(output_path)
+            output_paths.append(output_path)
     return output_paths
+
+
+def _group_samples_for_visualization(samples: list[SampleRecord]) -> dict[str, list[SampleRecord]]:
+    groups: dict[str, list[SampleRecord]] = {}
+    for sample in samples:
+        group_name = _sample_visualization_group(sample)
+        groups.setdefault(group_name, []).append(sample)
+    return dict(sorted(groups.items(), key=lambda item: item[0]))
+
+
+def _sample_visualization_group(sample: SampleRecord) -> str:
+    provenance = sample.provenance
+
+    if "scene_name" in provenance:
+        return str(provenance["scene_name"])
+
+    if "environment" in provenance:
+        parts = [str(provenance["environment"])]
+        for key in ("difficulty", "version", "trajectory", "camera_name"):
+            value = provenance.get(key)
+            if value not in (None, ""):
+                parts.append(str(value))
+        return "__".join(parts)
+
+    sample_parts = [part for part in sample.sample_id.split("/") if part]
+    if len(sample_parts) >= 2:
+        return "__".join(sample_parts[:-1])
+    return "ungrouped"
+
+
+def _sanitize_path_component(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
+    return cleaned or "ungrouped"
 
 
 def _build_sample_panel(sample: SampleRecord) -> Image.Image:
     rgb = _to_uint8_image(sample.image)
     reprojection = _render_same_camera_view(sample)
+    distance = _render_distance_map(sample)
     z_depth = _render_z_depth_map(sample)
     gap = 24
     label_height = 28
-    panel_width = rgb.width + reprojection.width + z_depth.width + 2 * gap
-    panel_height = label_height + max(rgb.height, reprojection.height, z_depth.height)
+    panel_width = rgb.width + reprojection.width + distance.width + z_depth.width + 3 * gap
+    panel_height = label_height + max(rgb.height, reprojection.height, distance.height, z_depth.height)
     canvas = Image.new("RGB", (panel_width, panel_height), color=(255, 255, 255))
     draw = ImageDraw.Draw(canvas)
     draw.text((0, 0), sample.sample_id, fill=(0, 0, 0))
     draw.text((0, 14), "rgb", fill=(0, 0, 0))
     draw.text((rgb.width + gap, 14), "reprojection", fill=(0, 0, 0))
-    draw.text((rgb.width + reprojection.width + 2 * gap, 14), "z-depth", fill=(0, 0, 0))
+    draw.text((rgb.width + reprojection.width + 2 * gap, 14), "distance", fill=(0, 0, 0))
+    draw.text((rgb.width + reprojection.width + distance.width + 3 * gap, 14), "z-depth", fill=(0, 0, 0))
     canvas.paste(rgb, (0, label_height))
     canvas.paste(reprojection, (rgb.width + gap, label_height))
-    canvas.paste(z_depth, (rgb.width + reprojection.width + 2 * gap, label_height))
+    canvas.paste(distance, (rgb.width + reprojection.width + 2 * gap, label_height))
+    canvas.paste(z_depth, (rgb.width + reprojection.width + distance.width + 3 * gap, label_height))
     return canvas
 
 
@@ -146,15 +187,25 @@ def _render_same_camera_view(sample: SampleRecord) -> Image.Image:
 
 def _render_z_depth_map(sample: SampleRecord) -> Image.Image:
     z_depth = np.asarray(sample.distance * sample.ray_dir[..., 2:3], dtype=np.float32)[..., 0]
-    valid = np.isfinite(z_depth)
+    return _render_scalar_map(z_depth)
+
+
+def _render_distance_map(sample: SampleRecord) -> Image.Image:
+    distance = np.asarray(sample.distance[..., 0], dtype=np.float32)
+    return _render_scalar_map(distance)
+
+
+def _render_scalar_map(values: np.ndarray) -> Image.Image:
+    scalar = np.asarray(values, dtype=np.float32)
+    valid = np.isfinite(scalar)
     if not np.any(valid):
-        return Image.new("RGB", (z_depth.shape[1], z_depth.shape[0]), color=(0, 0, 0))
-    near = float(np.min(z_depth[valid]))
-    far = float(np.max(z_depth[valid]))
+        return Image.new("RGB", (scalar.shape[1], scalar.shape[0]), color=(0, 0, 0))
+    near = float(np.min(scalar[valid]))
+    far = float(np.max(scalar[valid]))
     if far - near < 1e-6:
-        normalized = np.zeros_like(z_depth, dtype=np.float32)
+        normalized = np.zeros_like(scalar, dtype=np.float32)
     else:
-        normalized = np.clip((z_depth - near) / (far - near), 0.0, 1.0)
+        normalized = np.clip((scalar - near) / (far - near), 0.0, 1.0)
     colorized = _reverse_jet_colormap(normalized)
     colorized[~valid] = 0.0
     return _to_uint8_image(colorized)

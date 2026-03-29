@@ -56,6 +56,16 @@ Main commands:
 - `dc clean_process <project> --yes`: remove processed outputs and process-stage state, while keeping raw extracted data
 - `dc clean <project> --yes`: remove that project's local data directory
 
+## Acquisition Policy
+
+Supported dataset integrations are expected to download their own source data from Hugging Face Hub or another public mirror.
+
+This is an explicit project rule:
+
+- users should not be expected to manually gather source data for a finished pipeline
+- temporary local staging may be used during development, but it is not the target product behavior
+- implementing the acquisition path is part of building the pipeline
+
 Visualization modes:
 
 - `dc visualize <project> --max-samples 24`: visualize a bounded sample count
@@ -75,11 +85,23 @@ dc visualize default
 dc status default
 ```
 
-For TartanAir development smoke runs, the default config already uses small `download_ratio` and `process_ratio` values so you can test the full workflow on a tiny subset first.
+For development smoke runs, the default config now uses dataset-specific non-partial download counts plus a small `process_ratio` so you can test the full workflow on a tiny subset first.
 
-The default config now includes both `tartanair` and `tartanground`, each with a narrow selection and small ratios so the multi-dataset workflow stays testable.
+The default config now includes both `tartanair` and `tartanground`, each with a narrow selection and small ratios so the multi-dataset workflow stays testable. It also includes a disabled `hypersim` entry for the next high-priority integration.
 
 If you want faster downloads and your connection can sustain it, increase `runtime.download_workers` in the project config. You can also override it per dataset with `datasets.<name>.download_workers`. The default is conservative.
+
+Download selection is now dataset-specific:
+
+- `datasets.tartanair.environments` + `datasets.tartanair.environment_count`
+- `datasets.tartanground.environments` + `datasets.tartanground.environment_count`
+- `datasets.hypersim.scenes` + `datasets.hypersim.scene_count`
+- `datasets.megadepth.bundles` + `datasets.megadepth.bundle_count`
+
+Each count refers to complete non-partial units. A successful run will not intentionally leave partial environments, scenes, or bundles behind.
+For Tartan-family datasets, the count trims the shared pool of complete candidate slices, so a minimal setting selects the smallest complete RGB+depth slice from that pool rather than forcing every configured variation for one environment.
+
+Use `"*"` or `"all"` for a candidate-unit list to mean "discover all available units", then use the matching count field to limit how many complete units are downloaded.
 
 ## Configs
 
@@ -101,12 +123,13 @@ dc process --config configs/default.json
 ## Notes
 
 - The legacy scripts `s01_download.py`, `s02_extract_remove_archives.py`, and `s03_process.py` still exist as compatibility wrappers.
-- `dc extract` removes archives after successful extraction by default. Use `--keep-archives` if needed.
+- `dc extract` removes archives and the dataset-local Hugging Face cache after successful extraction by default. Use `--keep-archives` and/or `--keep-cache` if needed.
 - `dc process` is compact by default. Use `dc process <project> --verbose` for detailed cached-replay and selection progress.
 - `dc clean_process <project> --yes` removes `processed/`, `visualizations/`, `processed.jsonl`, `enumeration_manifest.json`, and process-stage error records, but keeps downloaded/extracted raw data.
-- `dc visualize` writes dense contact-sheet PNGs under `data/<project>/<dataset>/visualizations/`.
-- Each sample panel currently shows RGB, same-camera reprojection, and a z-depth map.
+- `dc visualize` writes dense contact-sheet PNGs under `data/<project>/<metric-or-relative>/<dataset>/visualizations/`.
+- Each sample panel currently shows RGB, same-camera reprojection, a canonical distance map, and a z-depth map computed from `ray_dir * distance`.
 - `dc visualize` accepts either `--max-samples <N>` or `--all`.
 - By default, `dc visualize` behaves like `--max-samples 24 --samples-per-image 24 --sample-columns 4`.
-- The default config currently enables both `tartanair` and `tartanground` with minimal-scope selections.
+- Datasets are now partitioned on disk as `data/<project>/metric/<dataset>/...` or `data/<project>/relative/<dataset>/...` depending on scale semantics.
+- Hugging Face cache is stored per dataset under `data/<project>/<metric-or-relative>/<dataset>/.hf_cache/` instead of the global user cache.
 - See [WORKFLOW.md](/home/olx2024/repos/depth-collector/WORKFLOW.md) for the project model, stage semantics, and config-state reconciliation rules.

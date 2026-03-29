@@ -8,8 +8,6 @@ def validate_config(config: RootConfig) -> None:
         raise ValueError("project.max_dist must be strictly positive")
     if not 0.0 < config.project.train_val_split < 1.0:
         raise ValueError("project.train_val_split must lie strictly between 0 and 1")
-    if not 0.0 < config.runtime.download_ratio <= 1.0:
-        raise ValueError("runtime.download_ratio must lie in (0, 1]")
     if config.runtime.download_workers < 1:
         raise ValueError("runtime.download_workers must be at least 1")
     if not 0.0 < config.runtime.process_ratio <= 1.0:

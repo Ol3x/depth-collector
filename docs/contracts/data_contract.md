@@ -28,6 +28,12 @@ For every valid pixel:
 - `distance` should encode the scalar distance traveled from the camera center to the 3D point
 - the 3D point reconstruction rule is `point = distance * ray_dir`
 
+For non-metric datasets:
+
+- `distance` should still preserve camera-center radial semantics
+- but the numeric range should be normalized into `[0, 1]` rather than pretending to be metric
+- `distance = 1` should act as the far / max bucket, including sky or unknown-far regions when such semantics are available
+
 ## Maximum Distance
 
 The global config should provide `max_dist`.
@@ -35,6 +41,11 @@ The global config should provide `max_dist`.
 - `distance` must lie in the closed interval `[0, max_dist]` for valid samples
 - geometry farther than `max_dist` should be projected onto the sphere of radius `max_dist`
 - infinite-distance regions, such as sky, should also be encoded with `distance = max_dist`
+
+For non-metric datasets, this repository currently uses the normalized variant of the same rule:
+
+- `distance` must lie in `[0, 1]`
+- `distance = 1` is the far / max bucket
 
 ## Coordinate Frame
 

@@ -38,28 +38,130 @@ class TartanGroundPipeline(TartanPipeline):
 
     DEFAULT_MODALITIES = ("image",)
     REQUIRED_MODALITIES = ("image", "depth")
-    DEFAULT_VERSIONS = ("omni",)
-    DEFAULT_TRAJECTORIES = ("P0000",)
-    DEFAULT_CAMERA_NAMES = ("lcam_front",)
+    DEFAULT_VERSIONS = ()
+    DEFAULT_TRAJECTORIES = ()
+    DEFAULT_CAMERA_NAMES = ()
     DEPTH_SUFFIXES = {".png"}
 
     def _selected_versions(self) -> list[str]:
-        return self._get_option_list("versions", self.DEFAULT_VERSIONS)
+        configured = self._configured_versions()
+        if configured:
+            return configured
+        return sorted({unit.version for unit in self._discover_archive_units()})
 
     def _selected_trajectories(self) -> list[str]:
-        return self._get_option_list("trajectories", self.DEFAULT_TRAJECTORIES)
+        configured = self._configured_trajectories()
+        if configured:
+            return configured
+        return sorted({unit.trajectory for unit in self._discover_archive_units()})
 
     def _selected_camera_names(self) -> list[str]:
+        configured = self._configured_camera_names()
+        if configured:
+            return configured
+        return sorted({unit.camera_name for unit in self._discover_archive_units()})
+
+    def _configured_versions(self) -> list[str]:
+        if self._uses_all_selector("versions", self.DEFAULT_VERSIONS):
+            return []
+        return self._get_option_list("versions", self.DEFAULT_VERSIONS)
+
+    def _configured_trajectories(self) -> list[str]:
+        if self._uses_all_selector("trajectories", self.DEFAULT_TRAJECTORIES):
+            return []
+        return self._get_option_list("trajectories", self.DEFAULT_TRAJECTORIES)
+
+    def _configured_camera_names(self) -> list[str]:
+        if self._uses_all_selector("camera_names", self.DEFAULT_CAMERA_NAMES):
+            return []
         return self._get_option_list("camera_names", self.DEFAULT_CAMERA_NAMES)
 
     def _selected_group_keys(self) -> list[tuple[str, str, str, str]]:
+        selected_environments = self._selected_environments()
+        selected_environment_set = set(selected_environments)
+        configured_versions = self._configured_versions()
+        configured_trajectories = self._configured_trajectories()
+        configured_camera_names = self._configured_camera_names()
+
+        if not (configured_versions and configured_trajectories and configured_camera_names):
+            discovered_groups = sorted(
+                {
+                    (unit.environment, unit.version, unit.trajectory, unit.camera_name)
+                    for unit in self._discover_archive_units()
+                    if unit.environment in selected_environment_set
+                    and (not configured_versions or unit.version in configured_versions)
+                    and (not configured_trajectories or unit.trajectory in configured_trajectories)
+                    and (not configured_camera_names or unit.camera_name in configured_camera_names)
+                }
+            )
+            if discovered_groups:
+                return [
+                    (str(environment), str(version), str(trajectory), str(camera_name))
+                    for environment, version, trajectory, camera_name in self._limit_group_keys(discovered_groups)
+                ]
+
         groups: list[tuple[str, str, str, str]] = []
-        for environment in self._selected_environments():
+        for environment in selected_environments:
             for version in self._selected_versions():
                 for trajectory in self._selected_trajectories():
                     for camera_name in self._selected_camera_names():
                         groups.append((environment, version, trajectory, camera_name))
-        return groups
+        return [
+            (str(environment), str(version), str(trajectory), str(camera_name))
+            for environment, version, trajectory, camera_name in self._limit_group_keys(groups)
+        ]
+
+    def _discover_archive_units(self) -> list[TartanGroundArchiveUnit]:
+        local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if local_archive_root:
+            units = self._discover_archive_units_from_root(Path(str(local_archive_root)))
+            if units:
+                return units
+        units = self._discover_archive_units_from_root(self.paths.raw)
+        if units:
+            return units
+        return self._discover_archive_units_from_remote()
+
+    def _discover_archive_units_from_root(self, root: Path) -> list[TartanGroundArchiveUnit]:
+        if not root.exists():
+            return []
+        units: set[TartanGroundArchiveUnit] = set()
+        for archive_path in root.rglob("*.zip"):
+            try:
+                relative_path = archive_path.relative_to(root)
+            except ValueError:
+                continue
+            unit = self._parse_archive_unit_from_relative_path(relative_path)
+            if unit is not None:
+                units.add(unit)
+        return sorted(units, key=lambda unit: (unit.environment, unit.version, unit.trajectory, unit.camera_name, unit.modality))
+
+    def _discover_archive_units_from_remote(self) -> list[TartanGroundArchiveUnit]:
+        units: set[TartanGroundArchiveUnit] = set()
+        for relative_path in self._iter_remote_relative_repo_paths():
+            unit = self._parse_archive_unit_from_relative_path(Path(relative_path))
+            if unit is not None:
+                units.add(unit)
+        return sorted(units, key=lambda unit: (unit.environment, unit.version, unit.trajectory, unit.camera_name, unit.modality))
+
+    def _parse_archive_unit_from_relative_path(self, relative_path: Path) -> TartanGroundArchiveUnit | None:
+        parts = relative_path.parts
+        if len(parts) != 4:
+            return None
+        environment, version_dir, trajectory, filename = parts
+        if Path(filename).suffix != ".zip" or "_" not in Path(filename).stem:
+            return None
+        modality, camera_name = Path(filename).stem.split("_", 1)
+        version = self._version_name_from_directory(version_dir)
+        if version is None:
+            return None
+        return TartanGroundArchiveUnit(
+            environment=environment,
+            version=version,
+            trajectory=trajectory,
+            modality=modality,
+            camera_name=camera_name,
+        )
 
     def _iter_group_download_units(self, group_key: tuple[object, ...]) -> list[object]:
         environment, version, trajectory, camera_name = group_key
@@ -208,6 +310,14 @@ class TartanGroundPipeline(TartanPipeline):
         if version not in mapping:
             raise ValueError(f"unsupported TartanGround version: {version}")
         return mapping[version]
+
+    def _version_name_from_directory(self, version_dir: str) -> str | None:
+        mapping = {
+            "Data_omni": "omni",
+            "Data_diff": "diff",
+            "Data_anymal": "anymal",
+        }
+        return mapping.get(version_dir)
 
     def _paired_ground_key(self, relative_path: str) -> str:
         parts = list(Path(relative_path).parts)

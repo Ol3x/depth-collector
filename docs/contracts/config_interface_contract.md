@@ -18,7 +18,6 @@ The configuration should expose at least:
 - project name
 - global `max_dist`
 - global `train_val_split`
-- global `download_ratio`
 - global `process_ratio`
 - dataset enablement map
 
@@ -38,6 +37,11 @@ Every dataset entry should support at least:
 - `hf_dataset_id`
 
 Optional dataset-local fields should be allowed, but they should remain scoped inside that dataset entry.
+
+Dataset-local selection fields should include:
+
+- candidate complete-unit lists such as `environments`, `scenes`, or `bundles`
+- matching complete-unit count keys such as `environment_count`, `scene_count`, or `bundle_count`
 
 ## Shared Runtime Expectations
 
@@ -67,7 +71,6 @@ The config layer should eventually validate at least:
 
 - required top-level sections exist
 - required fields have correct basic types
-- `download_ratio` is in a valid range
 - `process_ratio` is in a valid range
 - `train_val_split` is in a valid range
 - `max_dist` is strictly positive

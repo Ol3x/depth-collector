@@ -8,14 +8,38 @@ Suggested restart prompt:
 
 ```text
 Continue the depth-collector work from the current repo state.
-Current status: docs/spec/contracts are in place, the repo uses the micromamba env named depth-collector via environment.yml, TartanAir downloads archives from Hugging Face Hub, ingests paired image/depth files, converts depth into canonical distance, writes real .pt payloads into tar shards, distinguishes download_ratio from process_ratio with minimum-selection safeguards for tiny runs, and records richer metadata plus non-fatal processing/enumeration errors.
-Next target: harden the main scripts around real end-to-end smoke runs and decide whether the shard payload format should stay as single .pt blobs.
+Current status: the repo uses the micromamba env named depth-collector, exposes the dc CLI, supports download/extract/process/status/visualize/clean/clean_process, and the default project currently runs both TartanAir and TartanGround end to end with tiny ratios. The Tartan family abstraction is in place, both datasets download from Hugging Face, extract, enumerate paired image/depth data, convert to canonical distance plus ray_dir, write tar shards, and visualize successfully.
+Next target: move to the next roadmap priorities after the Tartan family, with Hypersim first.
 ```
 
-## Next TartanAir Increment
+## Current State
 
-1. Decide whether shard payloads should stay as `.pt` blobs or move to a stricter WebDataset field layout.
-2. Add a smoke-test path for the main scripts that exercises download, extraction, and processing together.
-3. Revisit whether `download_ratio` and `process_ratio` should sample by stable ordering, stable hashing, or both at each stage.
-4. Consider deduplicating repeated enumeration errors across reruns.
-5. Add download-stage retry and failure recording similar to processing-stage handling.
+- `tartanair` is working end to end in the default project.
+- `tartanground` is working end to end in the default project.
+- `dc clean_process --yes` resets only process-stage artifacts and keeps raw extracted data.
+- `dc process` now rebuilds correctly after `clean_process`.
+- Visualization is in place for processed datasets.
+
+## Next Priorities
+
+Based on the current implementation state and [pipeline_prioritization.md](/home/olx2024/repos/depth-collector/docs/research/pipeline_prioritization.md):
+
+1. Build the `Hypersim` pipeline.
+   - This is the documented `P0` target and should be the next major dataset integration.
+   - Reuse the existing pipeline abstractions instead of adding dataset-specific one-off flows.
+
+2. After `Hypersim`, move to the strongest documented `P1` non-Tartan targets.
+   - `Pointcept/arkitscenes-compressed`
+   - `Gen3DF/Structured3d-preprocessed`
+
+3. Keep refining family abstractions when new datasets justify them.
+   - Do not let one concrete pipeline depend on another concrete pipeline.
+   - Introduce family-level abstractions only when they genuinely remove duplication.
+
+## Near-Term Engineering Backlog
+
+1. Add a lightweight `dc doctor` or `dc version` command for faster diagnosis of live CLI/runtime mismatches.
+2. Decide whether the default compact `dc process` output should also hide the `selecting ... for process_ratio=...` line unless `--verbose` is used.
+3. Remove the remaining Pillow deprecation warning in the TartanGround test fixture.
+4. Add a multi-dataset smoke test that exercises both `tartanair` and `tartanground` together through the CLI.
+5. Document any dataset-specific depth encoding caveats under `docs/datasets/` as more pipelines are added.

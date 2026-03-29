@@ -48,6 +48,7 @@ class TartanPipeline(DatasetPipeline, ABC):
     """Shared family behavior for Tartan-style dataset pipelines."""
 
     ENUMERATION_MANIFEST_VERSION = 3
+    ALL_SELECTOR_VALUES = {"*", "all"}
     DEFAULT_DIFFICULTIES = ("Easy", "Hard")
     DEFAULT_MODALITIES = ("image_left",)
     DEFAULT_ENVIRONMENTS = ()
@@ -60,6 +61,7 @@ class TartanPipeline(DatasetPipeline, ABC):
         self._written_shards: list[dict[str, object]] = []
         self._run_stats["pairing_error_count"] = 0
         self._enumeration_manifest_cache: dict[str, object] | None = None
+        self._remote_repo_files_cache: tuple[str, ...] | None = None
 
     def _get_option_list(self, key: str, default: tuple[str, ...]) -> list[str]:
         value = self.dataset_config.options.get(key, default)
@@ -67,14 +69,88 @@ class TartanPipeline(DatasetPipeline, ABC):
             return [value]
         return [str(item) for item in value]
 
+    def _uses_all_selector(self, key: str, default: tuple[str, ...] = ()) -> bool:
+        value = self.dataset_config.options.get(key, default)
+        if isinstance(value, str):
+            return value.strip().lower() in self.ALL_SELECTOR_VALUES
+        if isinstance(value, list):
+            return any(str(item).strip().lower() in self.ALL_SELECTOR_VALUES for item in value)
+        return False
+
     def _selected_environments(self) -> list[str]:
-        configured = self._get_option_list("environments", self.DEFAULT_ENVIRONMENTS)
+        configured = self._configured_environments()
         if configured:
             return configured
+        return self._discover_environments()
 
-        if not self.paths.raw.exists():
+    def _configured_environments(self) -> list[str]:
+        if self._uses_all_selector("environments", self.DEFAULT_ENVIRONMENTS):
             return []
-        return sorted(path.name for path in self.paths.raw.iterdir() if path.is_dir())
+        return self._get_option_list("environments", self.DEFAULT_ENVIRONMENTS)
+
+    def _discover_environments(self) -> list[str]:
+        local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if local_archive_root:
+            environments = self._discover_environments_from_root(Path(str(local_archive_root)))
+            if environments:
+                return environments
+        if self.paths.raw.exists():
+            environments = self._discover_environments_from_root(self.paths.raw)
+            if environments:
+                return environments
+        return self._discover_remote_environments()
+
+    def _discover_environments_from_root(self, root: Path) -> list[str]:
+        if not root.exists():
+            return []
+        return sorted(path.name for path in root.iterdir() if path.is_dir() and not path.name.startswith("."))
+
+    def _discover_remote_environments(self) -> list[str]:
+        environments: set[str] = set()
+        for relative_path in self._iter_remote_relative_repo_paths():
+            parts = Path(relative_path).parts
+            if self._looks_like_remote_archive_path(parts):
+                environments.add(parts[0])
+        return sorted(environments)
+
+    def _looks_like_remote_archive_path(self, parts: tuple[str, ...]) -> bool:
+        if len(parts) < 3:
+            return False
+        filename = parts[-1]
+        if not filename.endswith(".zip"):
+            return False
+        return True
+
+    def _iter_remote_relative_repo_paths(self) -> Iterable[str]:
+        prefix = str(self.dataset_config.options.get("hf_path_prefix", "")).strip("/")
+        prefix_parts = tuple(part for part in Path(prefix).parts if part)
+        for repo_path in self._remote_repo_files():
+            repo_parts = Path(repo_path).parts
+            if prefix_parts:
+                if repo_parts[: len(prefix_parts)] != prefix_parts:
+                    continue
+                repo_parts = repo_parts[len(prefix_parts) :]
+            if not repo_parts:
+                continue
+            yield str(Path(*repo_parts))
+
+    def _remote_repo_files(self) -> tuple[str, ...]:
+        if self._remote_repo_files_cache is None:
+            self._remote_repo_files_cache = tuple(self._list_hf_files(self.dataset_config.hf_dataset_id))
+        return self._remote_repo_files_cache
+
+    def _list_hf_files(self, repo_id: str) -> list[str]:
+        return self.hf_list_repo_files(repo_id=repo_id, repo_type="dataset")
+
+    def _selected_environment_count(self) -> int:
+        configured = self.dataset_config.options.get("environment_count")
+        environments = self._selected_environments()
+        if configured is None:
+            return len(environments)
+        count = int(configured)
+        if count < 1:
+            raise ValueError("environment_count must be at least 1")
+        return min(count, len(environments))
 
     def _selected_difficulties(self) -> list[str]:
         return self._get_option_list("difficulties", self.DEFAULT_DIFFICULTIES)
@@ -92,18 +168,10 @@ class TartanPipeline(DatasetPipeline, ABC):
         for environment in self._selected_environments():
             for difficulty in self._selected_difficulties():
                 groups.append((environment, difficulty))
-        return groups
+        return self._limit_group_keys(groups)
 
-    def _iter_selected_download_units(self) -> list[object]:
-        groups = self._selected_group_keys()
-        if not groups:
-            return []
-        selected_group_count = max(1, int(np.ceil(len(groups) * self.config.runtime.download_ratio)))
-        selected_groups = groups[:selected_group_count]
-        units: list[object] = []
-        for group_key in selected_groups:
-            units.extend(self._iter_group_download_units(group_key))
-        return units
+    def _limit_group_keys(self, groups: list[tuple[object, ...]]) -> list[tuple[object, ...]]:
+        return groups[: self._selected_environment_count()]
 
     def enumerate_download_units(self) -> Iterable[object]:
         for group_key in self._selected_group_keys():
@@ -429,8 +497,7 @@ class TartanPipeline(DatasetPipeline, ABC):
             "suggested_train_shards": train_shards,
             "suggested_val_shards": val_shards,
             "process_ratio": self.config.runtime.process_ratio,
-            "download_ratio": self.config.runtime.download_ratio,
-            "partial_build": self.config.runtime.download_ratio < 1.0 or self.config.runtime.process_ratio < 1.0,
+            "partial_build": self.is_partial_download_build() or self.config.runtime.process_ratio < 1.0,
             "selected_download_unit_count": self._run_stats["selected_download_unit_count"],
             "download_error_count": self._run_stats["download_error_count"],
             "selected_extraction_unit_count": self._run_stats["selected_extraction_unit_count"],
@@ -614,16 +681,12 @@ class TartanPipeline(DatasetPipeline, ABC):
                 raise FileNotFoundError(f"missing local archive source: {local_path}")
             return local_path
 
-        from huggingface_hub import hf_hub_download
-
-        return Path(
-            hf_hub_download(
-                repo_id=self.dataset_config.hf_dataset_id,
-                repo_type="dataset",
-                filename=self._hub_repo_filename(unit),
-                revision=self.dataset_config.revision,
-                local_dir=self.paths.raw,
-            )
+        return self.hf_hub_download(
+            repo_id=self.dataset_config.hf_dataset_id,
+            repo_type="dataset",
+            filename=self._hub_repo_filename(unit),
+            revision=self.dataset_config.revision,
+            local_dir=self.paths.raw,
         )
 
     def _hub_repo_filename(self, unit: TartanArchiveUnit) -> str:

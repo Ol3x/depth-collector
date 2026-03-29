@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 import zipfile
 
 import numpy as np
@@ -24,7 +25,7 @@ class TartanAirPipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        download_ratio: float = 1.0,
+        environment_count: int = 1,
         process_ratio: float = 0.01,
         shuffle_seed: int = 0,
     ) -> dict[str, object]:
@@ -36,7 +37,6 @@ class TartanAirPipelineTest(unittest.TestCase):
                 "train_val_split": 0.95,
             },
             "runtime": {
-                "download_ratio": download_ratio,
                 "process_ratio": process_ratio,
                 "shuffle_seed": shuffle_seed,
                 "resume": True,
@@ -56,6 +56,7 @@ class TartanAirPipelineTest(unittest.TestCase):
                     "enabled": True,
                     "hf_dataset_id": "theairlabcmu/tartanair",
                     "environments": ["neighborhood"],
+                    "environment_count": environment_count,
                     "difficulties": ["Easy"],
                     "modalities": ["image_left"],
                 }
@@ -65,7 +66,7 @@ class TartanAirPipelineTest(unittest.TestCase):
     def _make_pipeline(
         self,
         tmp_dir: str,
-        download_ratio: float = 1.0,
+        environment_count: int = 1,
         process_ratio: float = 1.0,
         shuffle_seed: int = 0,
     ) -> TartanAirPipeline:
@@ -74,7 +75,7 @@ class TartanAirPipelineTest(unittest.TestCase):
             json.dumps(
                 self._make_config(
                     tmp_dir,
-                    download_ratio=download_ratio,
+                    environment_count=environment_count,
                     process_ratio=process_ratio,
                     shuffle_seed=shuffle_seed,
                 )
@@ -126,9 +127,9 @@ class TartanAirPipelineTest(unittest.TestCase):
                 ],
             )
 
-    def test_download_ratio_limits_selected_units(self) -> None:
+    def test_environment_count_limits_selected_units(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            pipeline = self._make_pipeline(tmp_dir, download_ratio=0.34)
+            pipeline = self._make_pipeline(tmp_dir, environment_count=2)
             pipeline.dataset_config.options["environments"] = ["env_a", "env_b", "env_c"]
             selected_units = pipeline._iter_selected_download_units()
             self.assertEqual(len(selected_units), 4)
@@ -141,6 +142,73 @@ class TartanAirPipelineTest(unittest.TestCase):
                     TartanAirArchiveUnit(environment="env_b", difficulty="Easy", modality="depth_left"),
                 ],
             )
+
+    def test_all_environment_selector_discovers_remote_environments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, environment_count=2)
+            pipeline.dataset_config.options["environments"] = "*"
+            with patch.object(
+                pipeline,
+                "_list_hf_files",
+                return_value=[
+                    "env_b/Easy/image_left.zip",
+                    "env_a/Easy/image_left.zip",
+                    "env_c/Hard/depth_left.zip",
+                ],
+            ):
+                selected_units = pipeline._iter_selected_download_units()
+            self.assertEqual(
+                selected_units,
+                [
+                    TartanAirArchiveUnit(environment="env_a", difficulty="Easy", modality="image_left"),
+                    TartanAirArchiveUnit(environment="env_a", difficulty="Easy", modality="depth_left"),
+                    TartanAirArchiveUnit(environment="env_b", difficulty="Easy", modality="image_left"),
+                    TartanAirArchiveUnit(environment="env_b", difficulty="Easy", modality="depth_left"),
+                ],
+            )
+
+    def test_all_environment_selector_ignores_non_archive_repo_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, environment_count=1)
+            pipeline.dataset_config.options["environments"] = "*"
+            with patch.object(
+                pipeline,
+                "_list_hf_files",
+                return_value=[
+                    ".gitattributes",
+                    "README.md",
+                    "neighborhood/Easy/image_left.zip",
+                ],
+            ):
+                selected_units = pipeline._iter_selected_download_units()
+            self.assertEqual(
+                selected_units,
+                [
+                    TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="image_left"),
+                    TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="depth_left"),
+                ],
+            )
+
+    def test_environment_count_applies_to_environment_difficulty_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, environment_count=1)
+            pipeline.dataset_config.options["difficulties"] = ["Easy", "Hard"]
+            selected_units = pipeline._iter_selected_download_units()
+            self.assertEqual(
+                selected_units,
+                [
+                    TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="image_left"),
+                    TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="depth_left"),
+                ],
+            )
+
+    def test_local_environment_discovery_ignores_hidden_cache_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, environment_count=1)
+            pipeline.dataset_config.options["environments"] = "*"
+            (pipeline.paths.raw / ".cache" / "huggingface").mkdir(parents=True, exist_ok=True)
+            (pipeline.paths.raw / "abandonedfactory").mkdir(parents=True, exist_ok=True)
+            self.assertEqual(pipeline._selected_environments(), ["abandonedfactory"])
 
     def test_source_item_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

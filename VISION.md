@@ -7,11 +7,23 @@ The project is not only a collection of one-off scripts. It should become a reus
 - producing sharded training data in a format that is practical for large-scale model training
 - documenting every assumption well enough that future agents can extend the system safely
 
+The project should also be opinionated about responsibility boundaries:
+
+- users should not be expected to manually gather source datasets for a completed integration
+- if a dataset is considered supported, the repository should know how to fetch it from a public source itself
+- local manual staging is acceptable only as an exploratory or temporary development step, not as the finished product
+
 The ambition is to support many datasets over time while preserving one strict sample contract:
 
 - RGB image
 - distance-to-camera target
 - ray direction field
+
+That contract should remain honest about scale:
+
+- metric datasets should preserve metric camera distance
+- non-metric datasets should still use camera-distance semantics, but normalized into `[0, 1]`
+- for non-metric datasets, `1` is the far / max bucket rather than a physical unit
 
 The main product is therefore a standardized dataset factory, not a single dataset export.
 

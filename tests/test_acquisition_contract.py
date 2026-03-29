@@ -1,0 +1,230 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from tests import _bootstrap  # noqa: F401
+from depth_collector.config import load_config
+from depth_collector.datasets import HypersimPipeline, MegaDepthPipeline, TartanAirPipeline, TartanGroundPipeline
+from depth_collector.datasets.hypersim import HypersimSceneUnit
+from depth_collector.datasets.megadepth import MegaDepthDownloadUnit
+from depth_collector.datasets.tartanair import TartanAirArchiveUnit
+from depth_collector.datasets.tartanground import TartanGroundArchiveUnit
+from depth_collector.datasets.wmg_stereo import WMGStereoArchiveUnit
+from depth_collector.datasets.wmg_stereo_flying import WMGStereoFlyingPipeline
+
+
+class _HfHelperCalled(RuntimeError):
+    pass
+
+
+class AcquisitionContractTest(unittest.TestCase):
+    def _write_config(self, tmp_dir: str, datasets: dict[str, object]) -> Path:
+        config_path = Path(tmp_dir) / "config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "project": {
+                        "name": "default",
+                        "description": "acquisition contract",
+                        "max_dist": 100.0,
+                        "train_val_split": 0.95,
+                    },
+                    "runtime": {
+                        "download_workers": 1,
+                        "process_ratio": 1.0,
+                        "shuffle_seed": 0,
+                        "resume": True,
+                        "skip_known_errors": True,
+                        "write_error_traces": True,
+                        "target_shard_size_gb": 1.0,
+                    },
+                    "output": {
+                        "root_data_dir": tmp_dir,
+                        "raw_subdir_name": "raw",
+                        "processed_subdir_name": "processed",
+                        "state_subdir_name": "state",
+                        "metadata_filename": "metadata.json",
+                    },
+                    "datasets": datasets,
+                }
+            )
+        )
+        return config_path
+
+    def test_dataset_modules_do_not_directly_use_non_shared_download_clients(self) -> None:
+        dataset_files = [
+            Path("src/depth_collector/datasets/tartan.py"),
+            Path("src/depth_collector/datasets/tartanground.py"),
+            Path("src/depth_collector/datasets/tartanair.py"),
+            Path("src/depth_collector/datasets/hypersim.py"),
+            Path("src/depth_collector/datasets/megadepth.py"),
+            Path("src/depth_collector/datasets/wmg_stereo.py"),
+            Path("src/depth_collector/datasets/wmg_stereo_flying.py"),
+        ]
+        forbidden_snippets = [
+            "from huggingface_hub import",
+            "import huggingface_hub",
+            "urlretrieve(",
+            "requests.get(",
+        ]
+        required_helper_snippets = [
+            "self.hf_hub_download(",
+            "self.hf_snapshot_download(",
+            "self.hf_list_repo_files(",
+        ]
+
+        for path in dataset_files:
+            source = path.read_text()
+            for snippet in forbidden_snippets:
+                self.assertNotIn(snippet, source, msg=f"{path} should not use {snippet} directly")
+        combined_source = "\n".join(path.read_text() for path in dataset_files)
+        self.assertTrue(any(snippet in combined_source for snippet in required_helper_snippets))
+
+    def test_tartanair_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "tartanair": {
+                        "enabled": True,
+                        "hf_dataset_id": "theairlabcmu/tartanair",
+                        "environments": ["neighborhood"],
+                        "environment_count": 1,
+                        "difficulties": ["Easy"],
+                        "modalities": ["image_left"],
+                    }
+                },
+            )
+            pipeline = TartanAirPipeline(load_config(config_path), "tartanair")
+            unit = TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="image_left")
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_tartanground_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "tartanground": {
+                        "enabled": True,
+                        "hf_dataset_id": "theairlabcmu/TartanGround",
+                        "environments": ["AbandonedCable"],
+                        "environment_count": 1,
+                        "versions": ["omni"],
+                        "trajectories": ["P0000"],
+                        "camera_names": ["lcam_front"],
+                        "modalities": ["image"],
+                    }
+                },
+            )
+            pipeline = TartanGroundPipeline(load_config(config_path), "tartanground")
+            unit = TartanGroundArchiveUnit(
+                environment="AbandonedCable",
+                version="omni",
+                trajectory="P0000",
+                modality="image",
+                camera_name="lcam_front",
+            )
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_hypersim_archive_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "hypersim": {
+                        "enabled": True,
+                        "hf_dataset_id": "ritianyu/Hypersim",
+                        "download_mode": "archive",
+                        "scenes": ["ai_001_001"],
+                        "scene_count": 1,
+                    }
+                },
+            )
+            pipeline = HypersimPipeline(load_config(config_path), "hypersim")
+            unit = HypersimSceneUnit(scene_name="ai_001_001")
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_hypersim_directory_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "hypersim": {
+                        "enabled": True,
+                        "hf_dataset_id": "ritianyu/Hypersim",
+                        "download_mode": "directory",
+                        "scenes": ["ai_001_001"],
+                        "scene_count": 1,
+                    }
+                },
+            )
+            pipeline = HypersimPipeline(load_config(config_path), "hypersim")
+            unit = HypersimSceneUnit(scene_name="ai_001_001")
+            with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_megadepth_bundle_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "megadepth": {
+                        "enabled": True,
+                        "hf_dataset_id": "ssbai/MegaDepth_v1",
+                        "bundles": ["megadepth_bundle"],
+                        "bundle_count": 1,
+                        "scene_info_dir": "prep_scene_info",
+                        "scenes": ["0015"],
+                    }
+                },
+            )
+            pipeline = MegaDepthPipeline(load_config(config_path), "megadepth")
+            unit = MegaDepthDownloadUnit(unit_name="megadepth_bundle", unit_type="bundle")
+            with patch.object(
+                pipeline,
+                "_list_hf_files",
+                return_value=[
+                    "MegaDepth_v1.tar.gz_part00",
+                    "prep_scene_info/0015.npz",
+                ],
+            ):
+                with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                    with self.assertRaises(_HfHelperCalled):
+                        pipeline.download_unit(unit)
+
+    def test_wmg_stereo_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "wmg_stereo_flying": {
+                        "enabled": True,
+                        "hf_dataset_id": "princeton-vl/WMGStereo",
+                        "release": "release_full",
+                        "archives": ["seed0001.tar.gz"],
+                        "archive_count": 1,
+                    }
+                },
+            )
+            pipeline = WMGStereoFlyingPipeline(load_config(config_path), "wmg_stereo_flying")
+            unit = WMGStereoArchiveUnit(
+                category="flying",
+                archive_name="seed0001.tar.gz",
+                repo_path="release_full/flying/seed0001.tar.gz",
+            )
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+
+if __name__ == "__main__":
+    unittest.main()

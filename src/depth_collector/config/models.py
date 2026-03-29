@@ -13,7 +13,6 @@ class ProjectConfig:
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    download_ratio: float
     download_workers: int
     process_ratio: float
     shuffle_seed: int

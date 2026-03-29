@@ -33,12 +33,14 @@ Project names resolve to `configs/<project>.json` by default, with `--config <pa
 - determines which download units are required by that config
 - downloads the required archives
 - does not extract archives
+- for a supported dataset integration, this stage is expected to acquire data from a public source directly rather than relying on the user to pre-stage files
 
 `dc extract <project>`
 
 - reads the selected config
 - determines which archives must be extracted
 - for each archive: extract it, remove the archive, continue to the next archive
+- removes the dataset-local Hugging Face cache after a successful extraction pass unless `--keep-cache` is used
 - does not process samples into output shards
 
 `dc process <project>`
@@ -69,13 +71,28 @@ Project names resolve to `configs/<project>.json` by default, with `--config <pa
 - removes `enumeration` and `processing` stage error records
 - keeps downloaded archives, extracted raw data, and download/extraction state intact
 
+Hugging Face cache policy:
+
+- each dataset stores its HF cache under `data/<project>/<metric-or-relative>/<dataset>/.hf_cache/`
+- no dataset should rely on the user's global `~/.cache/huggingface` directory
+- `dc extract` removes that dataset-local HF cache by default after a successful extraction pass
+- new HF-backed dataset pipelines should use the shared `DatasetPipeline` helper methods (`hf_list_repo_files`, `hf_hub_download`, `hf_snapshot_download`) so this policy applies automatically
+
+Acquisition contract for concrete dataset pipelines:
+
+- a finished pipeline must implement remote acquisition itself; it must not assume the user manually downloaded source files first
+- optional local mirrors may still exist for tests or smoke workflows, but they are not a substitute for the remote acquisition path
+- HF-backed pipelines are expected to acquire data through the shared HF helper methods on `DatasetPipeline`
+- acquisition-contract tests should fail if a dataset module bypasses those shared helpers or uses ad hoc alternate download clients
+
 `dc visualize <project>`
 
 - reads processed samples from dataset shards
 - reconstructs colored point clouds using `point = distance * ray_dir`
 - renders that reconstruction from the camera at the origin
+- renders a canonical distance map from `distance`
 - renders a z-depth map from the reconstructed `Z` coordinate
-- writes contact-sheet PNGs under `data/<project>/<dataset>/visualizations/`
+- writes contact-sheet PNGs under `data/<project>/<metric-or-relative>/<dataset>/visualizations/`
 - accepts either a bounded sample count (`--max-samples <N>`) or the full processed dataset (`--all`)
 - packs sample panels into a dense grid, controlled by `--samples-per-image` and `--sample-columns`
 
@@ -94,8 +111,17 @@ where `<project_name>` comes from `project.name` in the config.
 Datasets are then nested under that project directory:
 
 ```text
-data/<project_name>/<dataset_name>/
+data/<project_name>/metric/<dataset_name>/
+data/<project_name>/relative/<dataset_name>/
 ```
+
+Metric datasets live under `metric/`. Non-metric datasets live under `relative/`.
+
+For geometry semantics:
+
+- metric datasets keep metric camera distance
+- non-metric datasets still use camera-distance semantics, but normalize `distance` into `[0, 1]`
+- for non-metric datasets, `distance = 1` is the far / max bucket
 
 ## Reconciliation Rule
 
@@ -113,19 +139,25 @@ The practical goal is:
 
 - when a user runs a stage command with a config, the current on-disk state should move toward satisfying that config
 
+This also applies to acquisition:
+
+- a completed dataset pipeline should make `dc download` materially move the project toward the configured dataset state
+- requiring the user to fetch source files manually is not considered a finished integration
+
 ## Tiny-Run Behavior
 
 The runtime distinguishes:
 
-- `download_ratio`: fraction of remote archive units to download
+- dataset-specific complete-unit selectors such as `environment_count`, `scene_count`, or `bundle_count`
 - `download_workers`: number of archive downloads to run concurrently
 - `process_ratio`: fraction of extracted source items to process
 
 `download_workers` may be set globally under `runtime` and overridden per dataset under `datasets.<name>.download_workers`.
 
-For both:
+For count-based download selection:
 
-- if the requested ratio would otherwise yield zero useful work, the runtime still selects a minimum of one useful unit
+- if the requested count would otherwise yield zero useful work, the runtime still selects a minimum of one useful unit when a non-empty candidate list is configured
+- candidate-unit lists may use `"*"` or `"all"` to request all discoverable units, with the matching count key still limiting how many complete units are selected
 
 For tiny successful processing runs:
 
@@ -138,12 +170,31 @@ Current TartanAir behavior:
 - `dc download` expects archive paths like `<environment>/<difficulty>/image_left.zip` and `<environment>/<difficulty>/depth_left.zip`
 - if the dataset repo has an extra leading directory, set `datasets.tartanair.hf_path_prefix`
 - for offline smoke testing, `datasets.tartanair.local_archive_root` can mirror the same archive layout and act as the download source
+- use `datasets.tartanair.environments` to list candidate environments and `datasets.tartanair.environment_count` to choose how many complete Tartan-family slices to download
+- configured difficulties contribute to one shared candidate pool; a tiny count selects the smallest complete RGB+depth slice rather than forcing every configured difficulty for one environment
 
 Current TartanGround behavior:
 
 - `dc download` expects archive paths like `<environment>/Data_<version>/<trajectory>/image_<camera>.zip` and `depth_<camera>.zip`
 - the default config enables `tartanground` with a minimal `AbandonedCable / omni / P0000 / lcam_front` selection
 - `TartanGroundPipeline` should reuse shared Tartan-family geometry, validation, and sharding logic rather than reimplementing TartanAir internals
+- use `datasets.tartanground.environments` to list candidate environments and `datasets.tartanground.environment_count` to choose how many complete Tartan-family slices to download
+- configured versions, trajectories, and camera names contribute to one shared candidate pool; a tiny count selects the smallest complete RGB+depth slice rather than forcing every configured variation for one environment
+
+Current Hypersim behavior:
+
+- `dc download` expects per-scene archives like `<scene_name>.zip`
+- extraction expects the original scene-style layout with `_detail/` camera metadata and `images/scene_<camera>_*_hdf5/` frame files
+- the pipeline uses scene `meters_per_asset_unit`, per-camera keyframe positions and orientations, `position.hdf5`, and `depth_meters.hdf5` to derive canonical `ray_dir` and distance
+- Hypersim stays disabled by default in `configs/default.json` until the gated HF packaging is exercised more broadly
+- use `datasets.hypersim.scenes` to list candidate scenes and `datasets.hypersim.scene_count` to choose how many complete scenes to download
+
+Current MegaDepth behavior:
+
+- the current initial pipeline is non-metric, so it belongs under `relative/`
+- non-metric MegaDepth exports normalize radial distance into `[0, 1]`
+- `distance = 1` acts as the far / max bucket
+- use `datasets.megadepth.bundles` to list candidate bundles and `datasets.megadepth.bundle_count` to choose how many complete bundles to download
 
 Implementation note:
 

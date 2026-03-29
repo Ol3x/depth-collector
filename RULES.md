@@ -48,6 +48,13 @@ Every concrete dataset pipeline should implement logic to:
 - process source samples into the canonical representation using `numpy`-centric logic
 - store processed outputs as PyTorch `.pt` payloads packaged into WebDataset `.tar` shards
 
+This rule is strict:
+
+- never assume the user will manually gather source data for a finished dataset integration
+- manual local-data staging may be used for exploratory tests, but it is not an acceptable final pipeline state
+- if a public Hugging Face Hub dataset or other public mirror exists, the pipeline should acquire the data itself
+- building that acquisition path is part of the pipeline job, not user work
+
 Concrete pipelines should delegate generic geometry operations to shared utilities whenever possible. Examples include:
 
 - generating unit `ray_dir` for standard camera models such as pinhole
@@ -66,6 +73,8 @@ This is the most important invariant in the repository.
 - `distance` values must be clipped or mapped so they do not exceed `max_dist`.
 - Infinite-depth regions, including sky when present, must be represented at distance `max_dist`.
 - For every valid pixel, the corresponding 3D point must be reconstructible as `point = distance * ray_dir`.
+- For non-metric datasets, the repository should not pretend to have absolute scale.
+- The non-metric rule is: normalize radial distance into `[0, 1]`, with `1` used as the far / max bucket.
 
 ## Invalid Data Handling
 
@@ -96,11 +105,18 @@ Each config-defined multi-dataset project should have its own directory:
 
 - `data/<project_name>/`
 
-Each dataset within that project should use this local structure:
+Each dataset within that project should be partitioned by scale semantics first:
 
-- `data/<project_name>/<dataset_name>/raw/`
-- `data/<project_name>/<dataset_name>/processed/files/`
-- `data/<project_name>/<dataset_name>/processed/metadata.json`
+- `data/<project_name>/metric/<dataset_name>/`
+- `data/<project_name>/relative/<dataset_name>/`
+
+Metric datasets belong under `metric/`. Non-metric datasets belong under `relative/`.
+
+Each dataset within that metric/relative partition should then use this local structure:
+
+- `raw/`
+- `processed/files/`
+- `processed/metadata.json`
 
 ## Sharding And Metadata
 
