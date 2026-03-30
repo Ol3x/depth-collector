@@ -515,6 +515,101 @@ class DatasetPipeline(ABC):
         partial_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
         partial_path.replace(path)
 
+    def validate_processed_output_structure(self) -> None:
+        if not self.paths.metadata.exists():
+            raise ValueError("metadata.json was not created")
+        if not self.paths.run_report.exists():
+            raise ValueError("run_report.json was not created")
+
+        metrics_path = self.paths.processed / "metrics_summary.json"
+        if not metrics_path.exists():
+            raise ValueError("metrics_summary.json was not created")
+
+        metadata_payload = json.loads(self.paths.metadata.read_text())
+        if not isinstance(metadata_payload, dict):
+            raise ValueError("metadata.json must contain an object")
+
+        shard_count = metadata_payload.get("shard_count")
+        shard_names = metadata_payload.get("shard_names")
+        samples_per_shard = metadata_payload.get("samples_per_shard")
+        valid_sample_count = metadata_payload.get("valid_sample_count")
+        train_shards = metadata_payload.get("suggested_train_shards")
+        val_shards = metadata_payload.get("suggested_val_shards")
+
+        if not isinstance(shard_count, int) or shard_count < 0:
+            raise ValueError("metadata.shard_count must be a non-negative integer")
+        if not isinstance(shard_names, list) or not all(isinstance(name, str) for name in shard_names):
+            raise ValueError("metadata.shard_names must be a list of strings")
+        if len(shard_names) != shard_count:
+            raise ValueError("metadata.shard_count must match len(metadata.shard_names)")
+        if not isinstance(samples_per_shard, dict):
+            raise ValueError("metadata.samples_per_shard must be an object")
+        if set(samples_per_shard) != set(shard_names):
+            raise ValueError("metadata.samples_per_shard keys must match metadata.shard_names exactly")
+        if not isinstance(valid_sample_count, int) or valid_sample_count < 0:
+            raise ValueError("metadata.valid_sample_count must be a non-negative integer")
+
+        shard_hash_to_name: dict[str, str] = {}
+        unique_sample_total = 0
+        for shard_name, sample_count in samples_per_shard.items():
+            if not isinstance(sample_count, int) or sample_count < 0:
+                raise ValueError(f"metadata.samples_per_shard[{shard_name!r}] must be a non-negative integer")
+            shard_path = self.paths.processed_files / shard_name
+            if not shard_path.exists():
+                raise ValueError(f"metadata references missing shard file: {shard_name}")
+            if not shard_path.is_file():
+                raise ValueError(f"metadata shard path is not a file: {shard_name}")
+            shard_hash = self._file_sha256(shard_path)
+            prior_name = shard_hash_to_name.get(shard_hash)
+            if prior_name is None:
+                shard_hash_to_name[shard_hash] = shard_name
+                unique_sample_total += sample_count
+            elif samples_per_shard[prior_name] != sample_count:
+                raise ValueError(
+                    "duplicate shard payloads must report the same sample_count in metadata.samples_per_shard"
+                )
+
+        if unique_sample_total != valid_sample_count:
+            raise ValueError(
+                "metadata.valid_sample_count must equal the unique sample total implied by metadata.samples_per_shard"
+            )
+
+        if not isinstance(train_shards, list) or not all(isinstance(name, str) for name in train_shards):
+            raise ValueError("metadata.suggested_train_shards must be a list of strings")
+        if not isinstance(val_shards, list) or not all(isinstance(name, str) for name in val_shards):
+            raise ValueError("metadata.suggested_val_shards must be a list of strings")
+        unknown_split_shards = (set(train_shards) | set(val_shards)) - set(shard_names)
+        if unknown_split_shards:
+            unknown_list = ", ".join(sorted(unknown_split_shards))
+            raise ValueError(f"metadata suggested split references unknown shard(s): {unknown_list}")
+
+        run_report_payload = json.loads(self.paths.run_report.read_text())
+        if not isinstance(run_report_payload, dict):
+            raise ValueError("run_report.json must contain an object")
+        if run_report_payload.get("dataset") != self.dataset_name:
+            raise ValueError("run_report dataset does not match the active pipeline")
+        if run_report_payload.get("shard_count") != shard_count:
+            raise ValueError("run_report shard_count does not match metadata.shard_count")
+        if run_report_payload.get("valid_sample_count") != valid_sample_count:
+            raise ValueError("run_report valid_sample_count does not match metadata.valid_sample_count")
+
+        metrics_payload = json.loads(metrics_path.read_text())
+        if not isinstance(metrics_payload, dict):
+            raise ValueError("metrics_summary.json must contain an object")
+        metric_sample_count = metrics_payload.get("sample_count")
+        if metric_sample_count != valid_sample_count:
+            raise ValueError("metrics_summary sample_count does not match metadata.valid_sample_count")
+
+    def _file_sha256(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
     @abstractmethod
     def enumerate_download_units(self) -> Iterable[object]:
         raise NotImplementedError

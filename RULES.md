@@ -38,6 +38,9 @@ This file defines implementation constraints that should remain stable across th
 - Reusable camera-model and geometry functions should be shared across pipelines instead of reimplemented per dataset.
 - Concrete pipelines should not depend on, call into, or subclass other concrete pipelines.
 - Shared behavior between related concrete pipelines should live in utilities or abstract family pipeline classes instead.
+- Visualization is a shared runtime responsibility, not a dataset-pipeline extension point.
+- Concrete dataset pipelines must not define their own visualization methods, contact-sheet builders, or dataset-specific visualization conventions.
+- All dataset visual diagnostics must flow through the shared visualization implementation used by `dc visualize`.
 
 ## Required Dataset Pipeline Responsibilities
 
@@ -127,6 +130,13 @@ Each dataset within that metric/relative partition should then use this local st
   - number of shards
   - number of files or samples per shard
   - suggested training and validation splits derived from a `train_val_split` config value
+
+## Visualization
+
+- The repository must maintain one official visualization path shared by all datasets.
+- `dc visualize` should always render processed samples through the shared visualization module.
+- Adding a new dataset pipeline does not grant permission to introduce a new visualization method, custom panel format, or dataset-local rendering entrypoint.
+- Dataset-specific provenance may affect grouping labels only when the shared visualization module already supports that grouping behavior.
 
 ## Development Workflow Constraint
 

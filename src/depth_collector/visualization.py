@@ -6,8 +6,10 @@ import tarfile
 import sys
 import re
 
+from matplotlib import colormaps
+import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import torch
 from tqdm.auto import tqdm
 
@@ -55,7 +57,9 @@ def create_contact_sheet(
     dataset_name: str,
     samples_per_image: int,
     sample_columns: int,
+    absolute_scale_max: float,
 ) -> list[Path]:
+    del sample_columns
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: list[Path] = []
     grouped_samples = _group_samples_for_visualization(samples)
@@ -67,24 +71,13 @@ def create_contact_sheet(
             if not chunk:
                 continue
             panel_iterator = _progress(chunk, desc=f"{dataset_name} render", unit="sample")
-            panels = [_build_sample_panel(sample) for sample in panel_iterator]
-            columns = max(1, min(sample_columns, len(panels)))
-            rows = int(np.ceil(len(panels) / columns))
-            panel_width = max(panel.width for panel in panels)
-            panel_height = max(panel.height for panel in panels)
-            gap_x = 16
-            gap_y = 16
-            width = columns * panel_width + gap_x * max(0, columns - 1)
-            total_height = rows * panel_height + gap_y * max(0, rows - 1)
-            canvas = Image.new("RGB", (width, total_height), color=(245, 245, 245))
-            for index, panel in enumerate(panels):
-                row = index // columns
-                col = index % columns
-                offset_x = col * (panel_width + gap_x)
-                offset_y = row * (panel_height + gap_y)
-                canvas.paste(panel, (offset_x, offset_y))
+            row_images = [_build_sample_row(sample, absolute_scale_max=absolute_scale_max) for sample in panel_iterator]
             output_path = group_output_dir / f"{dataset_name}-visualization-{start // samples_per_image:03d}.png"
-            canvas.save(output_path)
+            _save_visualization_table(
+                sample_rows=row_images,
+                sample_ids=[sample.sample_id for sample in chunk],
+                output_path=output_path,
+            )
             output_paths.append(output_path)
     return output_paths
 
@@ -122,27 +115,111 @@ def _sanitize_path_component(value: str) -> str:
     return cleaned or "ungrouped"
 
 
-def _build_sample_panel(sample: SampleRecord) -> Image.Image:
+def _build_sample_row(sample: SampleRecord, *, absolute_scale_max: float) -> list[Image.Image]:
     rgb = _to_uint8_image(sample.image)
     reprojection = _render_same_camera_view(sample)
-    distance = _render_distance_map(sample)
-    z_depth = _render_z_depth_map(sample)
-    gap = 24
-    label_height = 28
-    panel_width = rgb.width + reprojection.width + distance.width + z_depth.width + 3 * gap
-    panel_height = label_height + max(rgb.height, reprojection.height, distance.height, z_depth.height)
-    canvas = Image.new("RGB", (panel_width, panel_height), color=(255, 255, 255))
-    draw = ImageDraw.Draw(canvas)
-    draw.text((0, 0), sample.sample_id, fill=(0, 0, 0))
-    draw.text((0, 14), "rgb", fill=(0, 0, 0))
-    draw.text((rgb.width + gap, 14), "reprojection", fill=(0, 0, 0))
-    draw.text((rgb.width + reprojection.width + 2 * gap, 14), "distance", fill=(0, 0, 0))
-    draw.text((rgb.width + reprojection.width + distance.width + 3 * gap, 14), "z-depth", fill=(0, 0, 0))
-    canvas.paste(rgb, (0, label_height))
-    canvas.paste(reprojection, (rgb.width + gap, label_height))
-    canvas.paste(distance, (rgb.width + reprojection.width + 2 * gap, label_height))
-    canvas.paste(z_depth, (rgb.width + reprojection.width + distance.width + 3 * gap, label_height))
-    return canvas
+    relative_distance = _render_distance_map(sample, absolute_scale_max=absolute_scale_max, relative=True)
+    absolute_distance = _render_distance_map(sample, absolute_scale_max=absolute_scale_max, relative=False)
+    relative_z_depth = _render_z_depth_map(sample, absolute_scale_max=absolute_scale_max, relative=True)
+    absolute_z_depth = _render_z_depth_map(sample, absolute_scale_max=absolute_scale_max, relative=False)
+    histogram = _render_histogram_panel(sample, absolute_scale_max=absolute_scale_max)
+    return [
+        rgb,
+        reprojection,
+        relative_distance,
+        absolute_distance,
+        relative_z_depth,
+        absolute_z_depth,
+        histogram,
+    ]
+
+
+def _save_visualization_table(sample_rows: list[list[Image.Image]], sample_ids: list[str], output_path: Path) -> None:
+    if not sample_rows:
+        Image.new("RGB", (1, 1), color=(255, 255, 255)).save(output_path)
+        return
+
+    column_labels = [
+        "sample",
+        "rgb",
+        "reprojection",
+        "rel distance",
+        "abs distance",
+        "rel depth",
+        "abs depth",
+        "histogram",
+    ]
+    row_count = len(sample_rows) + 1
+    col_count = len(column_labels)
+    first_row = sample_rows[0]
+    row_height = max(tile.height for tile in first_row)
+    tile_widths = [max(tile.width for tile in column_tiles) for column_tiles in zip(*sample_rows)]
+    id_width = max(row_height * 2, max(len(sample_id) for sample_id in sample_ids) * max(14, row_height // 10))
+    column_widths = [id_width, *tile_widths]
+    width_ratios = [max(1.0, float(width)) for width in column_widths]
+    height_ratios = [max(48.0, row_height * 0.24)] + [float(row_height) for _ in sample_rows]
+
+    fig_width = max(18.0, sum(width_ratios) / 110.0)
+    fig_height = max(4.0, sum(height_ratios) / 90.0)
+    fig, axes = plt.subplots(
+        row_count,
+        col_count,
+        figsize=(fig_width, fig_height),
+        gridspec_kw={"width_ratios": width_ratios, "height_ratios": height_ratios},
+    )
+    if row_count == 1:
+        axes = np.asarray([axes])
+    if col_count == 1:
+        axes = axes[:, None]
+
+    fig.patch.set_facecolor((0.96, 0.96, 0.96))
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01, wspace=0.04, hspace=0.10)
+
+    for col_index, label in enumerate(column_labels):
+        ax = axes[0, col_index]
+        ax.set_facecolor("white")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.text(
+            0.02,
+            0.5,
+            label,
+            transform=ax.transAxes,
+            ha="left",
+            va="center",
+            fontsize=max(14, int(row_height / 10)),
+            fontweight="bold",
+        )
+
+    for row_index, (sample_id, row_tiles) in enumerate(zip(sample_ids, sample_rows), start=1):
+        id_ax = axes[row_index, 0]
+        id_ax.set_facecolor("white")
+        id_ax.set_xticks([])
+        id_ax.set_yticks([])
+        for spine in id_ax.spines.values():
+            spine.set_visible(False)
+        id_ax.text(
+            0.02,
+            0.5,
+            sample_id,
+            transform=id_ax.transAxes,
+            ha="left",
+            va="center",
+            fontsize=max(12, int(row_height / 11)),
+            wrap=True,
+        )
+        for col_index, tile in enumerate(row_tiles, start=1):
+            ax = axes[row_index, col_index]
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            ax.imshow(np.asarray(tile))
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
 
 
 def _render_same_camera_view(sample: SampleRecord) -> Image.Image:
@@ -185,28 +262,105 @@ def _render_same_camera_view(sample: SampleRecord) -> Image.Image:
     return _to_uint8_image(canvas)
 
 
-def _render_z_depth_map(sample: SampleRecord) -> Image.Image:
+def _render_z_depth_map(sample: SampleRecord, *, absolute_scale_max: float, relative: bool) -> Image.Image:
     z_depth = np.asarray(sample.distance * sample.ray_dir[..., 2:3], dtype=np.float32)[..., 0]
-    return _render_scalar_map(z_depth)
+    return _render_scalar_map(z_depth, absolute_scale_max=absolute_scale_max, relative=relative)
 
 
-def _render_distance_map(sample: SampleRecord) -> Image.Image:
+def _render_distance_map(sample: SampleRecord, *, absolute_scale_max: float, relative: bool) -> Image.Image:
     distance = np.asarray(sample.distance[..., 0], dtype=np.float32)
-    return _render_scalar_map(distance)
+    return _render_scalar_map(distance, absolute_scale_max=absolute_scale_max, relative=relative)
 
 
-def _render_scalar_map(values: np.ndarray) -> Image.Image:
+def _render_histogram_panel(sample: SampleRecord, *, absolute_scale_max: float) -> Image.Image:
+    height, width = sample.image.shape[:2]
+    canvas = np.ones((height, width, 3), dtype=np.float32)
+    panel_font = _load_font(max(18, height // 12))
+
+    distance = np.asarray(sample.distance[..., 0], dtype=np.float32)
+    distance_hist = _compute_histogram(distance, upper=absolute_scale_max)
+
+    margin_left = max(24, width // 12)
+    margin_right = max(12, width // 24)
+    margin_top = max(18, height // 14)
+    margin_bottom = max(18, height // 10)
+    plot_width = max(1, width - margin_left - margin_right)
+    plot_height = max(1, height - margin_top - margin_bottom)
+    baseline = margin_top + plot_height
+
+    canvas[margin_top:baseline, margin_left : margin_left + plot_width] = 0.98
+
+    # Axes.
+    canvas[baseline - 1 : baseline + 1, margin_left : margin_left + plot_width] = 0.15
+    canvas[margin_top:baseline, margin_left - 1 : margin_left + 1] = 0.15
+
+    distance_color = np.array([0.850, 0.325, 0.098], dtype=np.float32)
+    bar_gap = 1
+    bin_count = len(distance_hist)
+    bin_width = max(1, plot_width // bin_count)
+
+    for index in range(bin_count):
+        x0 = margin_left + index * bin_width
+        x1 = min(margin_left + plot_width, x0 + max(1, bin_width - bar_gap))
+        if x0 >= x1:
+            continue
+        distance_bar_height = int(distance_hist[index] * max(1, plot_height - 1))
+        if distance_bar_height > 0:
+            canvas[baseline - distance_bar_height : baseline, x0:x1] = distance_color
+
+    panel = _to_uint8_image(canvas)
+    draw = ImageDraw.Draw(panel)
+    label_y = max(0, margin_top - max(18, height // 18))
+    draw.text((margin_left, label_y), "distance", fill=(217, 83, 25), font=panel_font)
+    axis_y = max(0, height - max(20, height // 14))
+    draw.text((margin_left, axis_y), "0", fill=(0, 0, 0), font=panel_font)
+    upper_label = f"{absolute_scale_max:.0f}" if absolute_scale_max >= 10.0 else f"{absolute_scale_max:.2f}"
+    right_label_x = max(margin_left, width - margin_right - max(24, len(upper_label) * 8))
+    draw.text((right_label_x, axis_y), upper_label, fill=(0, 0, 0), font=panel_font)
+    return panel
+
+
+def _compute_histogram(values: np.ndarray, *, upper: float, bins: int = 64) -> np.ndarray:
+    scalar = np.asarray(values, dtype=np.float32)
+    valid = np.isfinite(scalar)
+    if upper <= 1e-6 or not np.any(valid):
+        return np.zeros(bins, dtype=np.float32)
+    clipped = np.clip(scalar[valid], 0.0, upper)
+    counts, _ = np.histogram(clipped, bins=bins, range=(0.0, upper))
+    counts = counts.astype(np.float32)
+    peak = float(np.max(counts))
+    if peak <= 1e-6:
+        return np.zeros(bins, dtype=np.float32)
+    return counts / peak
+
+
+def _render_scalar_map(values: np.ndarray, *, absolute_scale_max: float | None = None, relative: bool = True) -> Image.Image:
     scalar = np.asarray(values, dtype=np.float32)
     valid = np.isfinite(scalar)
     if not np.any(valid):
         return Image.new("RGB", (scalar.shape[1], scalar.shape[0]), color=(0, 0, 0))
-    near = float(np.min(scalar[valid]))
-    far = float(np.max(scalar[valid]))
-    if far - near < 1e-6:
-        normalized = np.zeros_like(scalar, dtype=np.float32)
+    valid_values = scalar[valid]
+    if relative:
+        near = float(np.percentile(valid_values, 1.0))
+        far = float(np.percentile(valid_values, 99.0))
+        absolute_near = float(np.min(valid_values))
+        absolute_far = float(np.max(valid_values))
+        if far - near < 1e-6:
+            near = absolute_near
+            far = absolute_far
+        if far - near < 1e-6:
+            normalized = np.zeros_like(scalar, dtype=np.float32)
+        else:
+            normalized = np.clip((scalar - near) / (far - near), 0.0, 1.0)
     else:
-        normalized = np.clip((scalar - near) / (far - near), 0.0, 1.0)
-    colorized = _reverse_jet_colormap(normalized)
+        scale_max = float(absolute_scale_max or 1.0)
+        if scale_max <= 1e-6:
+            normalized = np.zeros_like(scalar, dtype=np.float32)
+        else:
+            normalized = np.clip(scalar / scale_max, 0.0, 1.0)
+    # Spectral already maps lower values toward the warm end and higher values
+    # toward the cool end, which matches the shared near-red / far-blue rule.
+    colorized = _spectral_colormap(normalized)
     colorized[~valid] = 0.0
     return _to_uint8_image(colorized)
 
@@ -238,17 +392,37 @@ def _to_uint8_image(image: np.ndarray) -> Image.Image:
     return Image.fromarray(np.rint(array * 255.0).astype(np.uint8), mode="RGB")
 
 
-def _reverse_jet_colormap(values: np.ndarray) -> np.ndarray:
+def _load_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    candidate_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    ]
+    for path in candidate_paths:
+        font_path = Path(path)
+        if not font_path.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(font_path), size=size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _measure_text_height(font: ImageFont.ImageFont | ImageFont.FreeTypeFont) -> int:
+    try:
+        bbox = font.getbbox("Ag")
+        return max(1, int(bbox[3] - bbox[1]))
+    except AttributeError:
+        return max(1, int(getattr(font, "size", 12)))
+
+
+def _spectral_colormap(values: np.ndarray) -> np.ndarray:
     values = np.clip(values, 0.0, 1.0)
-    base = np.stack(
-        (
-            np.clip(1.5 - np.abs(4.0 * values - 3.0), 0.0, 1.0),
-            np.clip(1.5 - np.abs(4.0 * values - 2.0), 0.0, 1.0),
-            np.clip(1.5 - np.abs(4.0 * values - 1.0), 0.0, 1.0),
-        ),
-        axis=-1,
-    )
-    return base[..., ::-1]
+    return np.asarray(colormaps["Spectral"](values)[..., :3], dtype=np.float32)
 
 
 def _split_member_name(name: str) -> tuple[str, str]:

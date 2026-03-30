@@ -2,6 +2,8 @@
 
 This document defines the expected boundary between dataset-specific pipeline code and the shared runtime.
 
+New dataset integrations should also follow [new_pipeline_guidelines.md](/home/olx2024/repos/depth-collector/docs/contracts/new_pipeline_guidelines.md), especially the requirements around honest complete-unit selection, full-dataset-capable config design, and stopping when the available source artifact is the wrong type for this repository.
+
 ## Dataset Pipeline Responsibilities
 
 Dataset pipelines should:
@@ -19,6 +21,8 @@ Dataset pipelines should not:
 - invent dataset-local error-record formats
 - invent dataset-local resumability mechanisms when shared ones are sufficient
 - duplicate common canonical-output validation logic when shared validation bottlenecks are available
+- define dataset-local visualization entrypoints, panel layouts, or rendering conventions
+- bypass the shared visualization module used by `dc visualize`
 
 ## Shared Runtime Responsibilities
 
@@ -30,6 +34,7 @@ The shared runtime should:
 - emit metadata scaffolding
 - run shared validation entrypoints
 - persist stage-aware error records
+- own visualization loading, rendering, grouping, and output layout
 
 The shared runtime should own the main canonical pre-save validation bottleneck.
 
@@ -52,3 +57,15 @@ The pipeline should be able to reject a source item cleanly when:
 - decoding fails
 
 In those cases, the item should be logged through the shared error-record path and excluded from processed outputs.
+
+## Visualization Boundary
+
+Visualization belongs to the shared runtime, not to dataset pipelines.
+
+Dataset pipelines may contribute only the processed sample content and ordinary provenance fields.
+
+They should not:
+
+- implement their own `visualize` method
+- import shared visualization helpers directly for dataset-local rendering
+- produce dataset-specific visualization outputs outside the shared `dc visualize` flow

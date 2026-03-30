@@ -7,10 +7,15 @@ from unittest.mock import patch
 from tests import _bootstrap  # noqa: F401
 from depth_collector.config import load_config
 from depth_collector.datasets import HypersimPipeline, MegaDepthPipeline, TartanAirPipeline, TartanGroundPipeline
+from depth_collector.datasets.diode import DIODEArchiveUnit, DIODEPipeline
 from depth_collector.datasets.hypersim import HypersimSceneUnit
 from depth_collector.datasets.megadepth import MegaDepthDownloadUnit
 from depth_collector.datasets.tartanair import TartanAirArchiveUnit
 from depth_collector.datasets.tartanground import TartanGroundArchiveUnit
+from depth_collector.datasets.topair import TopAirPipeline, TopAirTrajectoryUnit
+from depth_collector.datasets.tof_360 import ToF360Pipeline, ToF360SceneUnit
+from depth_collector.datasets.urbansyn import UrbanSynFrameUnit, UrbanSynPipeline
+from depth_collector.datasets.virtual_kitti_2 import VirtualKITTI2ArchiveUnit, VirtualKITTI2Pipeline
 from depth_collector.datasets.wmg_stereo import WMGStereoArchiveUnit
 from depth_collector.datasets.wmg_stereo_flying import WMGStereoFlyingPipeline
 
@@ -58,8 +63,13 @@ class AcquisitionContractTest(unittest.TestCase):
             Path("src/depth_collector/datasets/tartan.py"),
             Path("src/depth_collector/datasets/tartanground.py"),
             Path("src/depth_collector/datasets/tartanair.py"),
+            Path("src/depth_collector/datasets/diode.py"),
             Path("src/depth_collector/datasets/hypersim.py"),
             Path("src/depth_collector/datasets/megadepth.py"),
+            Path("src/depth_collector/datasets/topair.py"),
+            Path("src/depth_collector/datasets/tof_360.py"),
+            Path("src/depth_collector/datasets/urbansyn.py"),
+            Path("src/depth_collector/datasets/virtual_kitti_2.py"),
             Path("src/depth_collector/datasets/wmg_stereo.py"),
             Path("src/depth_collector/datasets/wmg_stereo_flying.py"),
         ]
@@ -99,6 +109,25 @@ class AcquisitionContractTest(unittest.TestCase):
             )
             pipeline = TartanAirPipeline(load_config(config_path), "tartanair")
             unit = TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="image_left")
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_diode_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "diode_subset_train": {
+                        "enabled": True,
+                        "hf_dataset_id": "sayakpaul/diode-subset-train",
+                        "archive_filename": "train_subset.tar.gz",
+                        "splits": ["train"],
+                    }
+                },
+            )
+            pipeline = DIODEPipeline(load_config(config_path), "diode_subset_train")
+            unit = DIODEArchiveUnit(archive_name="train_subset.tar.gz")
             with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
@@ -221,6 +250,95 @@ class AcquisitionContractTest(unittest.TestCase):
                 archive_name="seed0001.tar.gz",
                 repo_path="release_full/flying/seed0001.tar.gz",
             )
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_urbansyn_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "urbansyn": {
+                        "enabled": True,
+                        "hf_dataset_id": "UrbanSyn/UrbanSyn",
+                        "frames": ["0001"],
+                        "frame_count": 1,
+                        "use_semantic_masks": True,
+                        "camera_intrinsics": {
+                            "width": 2048,
+                            "height": 1024,
+                            "fx": 2262.52,
+                            "fy": 2265.30,
+                            "cx": 1096.98,
+                            "cy": 513.137,
+                        },
+                    }
+                },
+            )
+            pipeline = UrbanSynPipeline(load_config(config_path), "urbansyn")
+            unit = UrbanSynFrameUnit(frame_id="0001")
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_tof_360_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "tof_360": {
+                        "enabled": True,
+                        "hf_dataset_id": "COLE-Ricoh/ToF-360",
+                        "scenes": ["scene_0001"],
+                        "scene_count": 1,
+                        "rgb_dir": "rgb",
+                        "depth_dir": "depth",
+                        "depth_scale_divisor": 512.0,
+                    }
+                },
+            )
+            pipeline = ToF360Pipeline(load_config(config_path), "tof_360")
+            unit = ToF360SceneUnit(scene_name="scene_0001")
+            with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_topair_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "topair": {
+                        "enabled": True,
+                        "hf_dataset_id": "yaraalaa0/TopAir",
+                        "trajectories": ["AssetsvilleTown_2"],
+                        "trajectory_count": 1,
+                        "use_semantic_masks": True,
+                        "sky_class_id": 0,
+                    }
+                },
+            )
+            pipeline = TopAirPipeline(load_config(config_path), "topair")
+            unit = TopAirTrajectoryUnit(trajectory_name="AssetsvilleTown_2")
+            with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_virtual_kitti_2_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "virtual_kitti_2": {
+                        "enabled": True,
+                        "hf_dataset_id": "ZhengGuangze/VKITTI2_vlbm",
+                        "archive_filename": "vkitti2_vlbm.tar.gz",
+                    }
+                },
+            )
+            pipeline = VirtualKITTI2Pipeline(load_config(config_path), "virtual_kitti_2")
+            unit = VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")
             with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)

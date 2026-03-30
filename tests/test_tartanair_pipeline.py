@@ -497,6 +497,49 @@ class TartanAirPipelineTest(unittest.TestCase):
             self.assertEqual(run_report["error_stage_counts"], {})
             self.assertEqual(run_report["run_stats"]["valid_sample_count"], 1)
 
+    def test_validate_output_rejects_mismatched_valid_sample_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            image_unit = TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="image_left")
+            depth_unit = TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="depth_left")
+            self._write_test_archive(pipeline, image_unit)
+            self._write_test_archive(pipeline, depth_unit)
+
+            pipeline.prepare_directories()
+            pipeline.run_extraction_stage()
+            pipeline.write_samples(pipeline.iter_valid_samples())
+            pipeline.build_metrics_summary()
+            pipeline.build_metadata()
+            pipeline.build_run_report()
+
+            metadata = json.loads(pipeline.paths.metadata.read_text())
+            metadata["valid_sample_count"] = 99
+            pipeline.paths.metadata.write_text(json.dumps(metadata))
+
+            with self.assertRaisesRegex(ValueError, "valid_sample_count"):
+                pipeline.validate_output()
+
+    def test_validate_output_rejects_missing_referenced_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            image_unit = TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="image_left")
+            depth_unit = TartanAirArchiveUnit(environment="neighborhood", difficulty="Easy", modality="depth_left")
+            self._write_test_archive(pipeline, image_unit)
+            self._write_test_archive(pipeline, depth_unit)
+
+            pipeline.prepare_directories()
+            pipeline.run_extraction_stage()
+            pipeline.write_samples(pipeline.iter_valid_samples())
+            pipeline.build_metrics_summary()
+            pipeline.build_metadata()
+            pipeline.build_run_report()
+
+            shard_path = next(pipeline.paths.processed_files.glob("*.tar"))
+            shard_path.unlink()
+
+            with self.assertRaisesRegex(ValueError, "missing shard file"):
+                pipeline.validate_output()
+
     def test_process_ratio_still_processes_one_item_for_tiny_fraction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir, process_ratio=1e-12, shuffle_seed=0)

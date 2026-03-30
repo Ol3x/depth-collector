@@ -513,8 +513,7 @@ class TartanPipeline(DatasetPipeline, ABC):
         self._write_json_atomic(self.paths.metadata, metadata)
 
     def validate_output(self) -> None:
-        if not self.paths.metadata.exists():
-            raise ValueError("metadata.json was not created")
+        self.validate_processed_output_structure()
 
     def get_download_unit_id(self, unit: object) -> str:
         assert isinstance(unit, TartanArchiveUnit)

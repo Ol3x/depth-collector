@@ -26,6 +26,24 @@
       "enabled": false,
       "hf_dataset_id": "sayakpaul/nyu_depth_v2"
     },
+    "diode_subset_train": {
+      "enabled": true,
+      "hf_dataset_id": "sayakpaul/diode-subset-train",
+      "archive_filename": "train_subset.tar.gz",
+      "splits": [
+        "train"
+      ],
+      "scene_types": "*",
+      "depth_semantics": "distance",
+      "camera_intrinsics": {
+        "width": 1024,
+        "height": 768,
+        "fx": 512.0,
+        "fy": 512.0,
+        "cx": 512.0,
+        "cy": 384.0
+      }
+    },
     "hypersim": {
       "enabled": false,
       "hf_dataset_id": "ritianyu/Hypersim",
@@ -129,6 +147,60 @@
         "image"
       ]
     },
+    "virtual_kitti_2": {
+      "enabled": true,
+      "hf_dataset_id": "ZhengGuangze/VKITTI2_vlbm",
+      "archive_filename": "vkitti2_vlbm.tar.gz",
+      "sequences": "*",
+      "sequence_count": 1,
+      "depth_semantics": "distance"
+    },
+    "topair": {
+      "enabled": true,
+      "hf_dataset_id": "yaraalaa0/TopAir",
+      "trajectories": "*",
+      "trajectory_count": 1,
+      "use_semantic_masks": true,
+      "sky_class_id": 0,
+      "depth_semantics": "distance",
+      "depth_unit_meters": 0.39215686274509803,
+      "camera_intrinsics": {
+        "width": 384,
+        "height": 384,
+        "fx": 192.0,
+        "fy": 192.0,
+        "cx": 192.0,
+        "cy": 192.0
+      }
+    },
+    "tof_360": {
+      "enabled": false,
+      "hf_dataset_id": "COLE-Ricoh/ToF-360",
+      "scenes": "*",
+      "scene_count": 1,
+      "rgb_dir": "rgb",
+      "depth_dir": "depth",
+      "depth_scale_divisor": 512.0,
+      "missing_depth_policy": "max_dist"
+    },
+    "urbansyn": {
+      "enabled": true,
+      "hf_dataset_id": "UrbanSyn/UrbanSyn",
+      "frames": "*",
+      "frame_count": 1,
+      "use_semantic_masks": true,
+      "sky_class_id": 10,
+      "depth_semantics": "z_depth",
+      "depth_unit_meters": 100000.0,
+      "camera_intrinsics": {
+        "width": 2048,
+        "height": 1024,
+        "fx": 1730.207210073563,
+        "fy": 1730.207210073563,
+        "cx": 1024.0,
+        "cy": 512.0
+      }
+    },
     "wmg_stereo_flying": {
       "enabled": false,
       "hf_dataset_id": "princeton-vl/WMGStereo",
@@ -137,7 +209,7 @@
       "archive_count": 1
     },
     "wmg_stereo_nature": {
-      "enabled": true,
+      "enabled": false,
       "hf_dataset_id": "princeton-vl/WMGStereo",
       "release": "release_full",
       "archives": "*",

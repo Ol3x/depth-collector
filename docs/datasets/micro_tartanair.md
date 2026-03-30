@@ -10,7 +10,13 @@
 - Artifact risk: likely low
 - Canonical conversion difficulty: low
 - License on HF card: CC-BY-4.0 via TartanAir derivation
-- Status: candidate
-- Priority tier: P2
-- Why it matters: could be useful as a debugging or smoke-test dataset
-- Known issues: 48x48 resolution makes it unattractive for the main unified corpus
+- Status: not targeted
+- Priority tier: none
+- Why it matters: operationally it could serve as a debugging or smoke-test dataset
+- Known issues: overlaps with TartanAir content and the 48x48 resolution makes it unattractive for the main unified corpus
+
+## Current Decision
+
+- This repository is not treating `micro-tartanair` as a future pipeline target.
+- The reason is not just low resolution; it is also that the package substantially overlaps with already supported `TartanAir` content.
+- If a tiny Tartan-family debug source is ever needed later, it should be considered strictly as a convenience derivative, not as a strategic new corpus source.

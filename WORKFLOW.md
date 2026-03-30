@@ -95,6 +95,9 @@ Acquisition contract for concrete dataset pipelines:
 - writes contact-sheet PNGs under `data/<project>/<metric-or-relative>/<dataset>/visualizations/`
 - accepts either a bounded sample count (`--max-samples <N>`) or the full processed dataset (`--all`)
 - packs sample panels into a dense grid, controlled by `--samples-per-image` and `--sample-columns`
+- is the only supported visualization path for processed datasets in this repository
+- must use the shared visualization module for every dataset rather than dataset-specific rendering logic
+- may evolve centrally over time, but new dataset integrations are not allowed to invent alternate visualization conventions
 
 ## Project Model
 
@@ -200,3 +203,4 @@ Implementation note:
 
 - related datasets may share a family pipeline abstraction instead of duplicating logic in each concrete pipeline
 - for the Tartan family, shared logic should live in a `TartanPipeline` family class rather than inside one concrete dataset pipeline
+- new dataset integrations should follow [docs/contracts/new_pipeline_guidelines.md](/home/olx2024/repos/depth-collector/docs/contracts/new_pipeline_guidelines.md), especially the rule that default tiny-run selectors must still scale cleanly to full-dataset operation

@@ -456,7 +456,13 @@ def cmd_visualize(args: argparse.Namespace) -> int:
     max_samples = None if args.all else int(args.max_samples or 24)
     samples_per_image = int(args.samples_per_image)
     sample_columns = int(args.sample_columns)
-    for pipeline in load_enabled_pipelines(str(_resolve_config_path(args))):
+    dataset_filter = getattr(args, "dataset", None)
+    pipelines = load_enabled_pipelines(str(_resolve_config_path(args)))
+    if dataset_filter:
+        pipelines = [pipeline for pipeline in pipelines if pipeline.dataset_name == dataset_filter]
+        if not pipelines:
+            raise SystemExit(f"dataset {dataset_filter!r} is not enabled in the selected config")
+    for pipeline in pipelines:
         output_dir = pipeline.paths.root / "visualizations"
         samples = load_processed_samples(pipeline.paths.processed_files, max_samples=max_samples)
         if not samples:
@@ -468,6 +474,7 @@ def cmd_visualize(args: argparse.Namespace) -> int:
             dataset_name=pipeline.dataset_name,
             samples_per_image=samples_per_image,
             sample_columns=sample_columns,
+            absolute_scale_max=(pipeline.config.project.max_dist if pipeline.is_metric_scale() else 1.0),
         )
         print(
             f"[{pipeline.dataset_name}] visualization summary: samples={len(samples)} images={len(output_paths)} "
@@ -514,6 +521,10 @@ def build_parser() -> argparse.ArgumentParser:
         "project", nargs="?", default="default", help="Project name from configs/<name>.json."
     )
     visualize_parser.add_argument("--config", help="Explicit config JSON path. Overrides project name.")
+    visualize_parser.add_argument(
+        "--dataset",
+        help="Only visualize one enabled dataset by name. Default behavior visualizes all enabled datasets.",
+    )
     visualize_parser.add_argument("--max-samples", type=int, help="Maximum samples to visualize per dataset.")
     visualize_parser.add_argument("--all", action="store_true", help="Visualize all processed samples.")
     visualize_parser.add_argument(

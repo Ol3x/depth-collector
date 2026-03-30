@@ -213,6 +213,42 @@ class MainScriptsSmokeTest(unittest.TestCase):
             )
             self.assertIn("visualization summary", visualize_all_result.stdout)
 
+            visualize_targeted_result = subprocess.run(
+                [
+                    self._dc(),
+                    "visualize",
+                    "default",
+                    "--config",
+                    str(config_path),
+                    "--dataset",
+                    "tartanair",
+                    "--max-samples",
+                    "1",
+                ],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("[tartanair] visualization summary", visualize_targeted_result.stdout)
+
+            missing_dataset_result = subprocess.run(
+                [
+                    self._dc(),
+                    "visualize",
+                    "default",
+                    "--config",
+                    str(config_path),
+                    "--dataset",
+                    "urbansyn",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(missing_dataset_result.returncode, 0)
+            self.assertIn("is not enabled in the selected config", missing_dataset_result.stderr)
+
             conflict_result = subprocess.run(
                 [self._dc(), "visualize", "default", "--config", str(config_path), "--all", "--max-samples", "1"],
                 cwd=repo_root,

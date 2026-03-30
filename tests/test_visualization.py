@@ -7,7 +7,7 @@ import numpy as np
 from tests import _bootstrap  # noqa: F401
 from depth_collector.core import SampleRecord
 from depth_collector.geometry import PinholeCameraModel, generate_pinhole_rays
-from depth_collector.visualization import create_contact_sheet
+from depth_collector.visualization import _build_sample_row, _render_scalar_map, create_contact_sheet
 
 
 class VisualizationTest(unittest.TestCase):
@@ -39,6 +39,7 @@ class VisualizationTest(unittest.TestCase):
                 dataset_name="hypersim",
                 samples_per_image=1,
                 sample_columns=1,
+                absolute_scale_max=100.0,
             )
 
             self.assertEqual(len(output_paths), 3)
@@ -66,10 +67,39 @@ class VisualizationTest(unittest.TestCase):
                 dataset_name="tartanground",
                 samples_per_image=24,
                 sample_columns=4,
+                absolute_scale_max=100.0,
             )
 
             self.assertEqual(len(output_paths), 1)
             self.assertEqual(output_paths[0].parent.name, "AbandonedCable__omni__P0000__lcam_front")
+
+    def test_scalar_map_uses_robust_percentile_scaling_for_outliers(self) -> None:
+        values = np.full((10, 10), 10.0, dtype=np.float32)
+        values[0, 0] = 1000.0
+
+        image = _render_scalar_map(values, absolute_scale_max=1000.0, relative=True)
+        array = np.asarray(image)
+
+        self.assertGreater(int(np.sum(array[1, 1])), 0)
+        self.assertNotEqual(array[1, 1].tolist(), array[0, 0].tolist())
+
+    def test_scalar_map_renders_near_values_warmer_than_far_values(self) -> None:
+        values = np.array([[1.0, 100.0]], dtype=np.float32)
+
+        image = _render_scalar_map(values, absolute_scale_max=100.0, relative=False)
+        array = np.asarray(image)
+
+        near_rgb = array[0, 0].astype(np.int32)
+        far_rgb = array[0, 1].astype(np.int32)
+        self.assertGreater(int(near_rgb[0]), int(far_rgb[0]))
+        self.assertLess(int(near_rgb[2]), int(far_rgb[2]))
+
+    def test_sample_row_contains_shared_visualization_tiles(self) -> None:
+        sample = self._sample("demo/frame.0000", {})
+        row_tiles = _build_sample_row(sample, absolute_scale_max=100.0)
+
+        self.assertEqual(len(row_tiles), 7)
+        self.assertTrue(all(tile.size == (4, 4) for tile in row_tiles))
 
 
 if __name__ == "__main__":

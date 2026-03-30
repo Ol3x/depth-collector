@@ -1,5 +1,7 @@
 # depth-collector
-Builds pipelines to hugging face hub datasets in order to create an immense public, high quality, standardized, monocular depth dataset.
+`depth-collector` is a dataset factory.
+
+It builds pipelines to Hugging Face Hub and other public datasets in order to create an immense public, high quality, standardized monocular depth dataset.
 
 ## Environment
 
@@ -53,6 +55,7 @@ Main commands:
 - `dc extract <project>`: extract downloaded archives and remove them after extraction
 - `dc process <project>`: process extracted data into shards and metadata
 - `dc visualize <project>`: render diagnostic image sheets from processed samples
+- `dc visualize <project> --dataset <name>`: render diagnostics for one enabled dataset only
 - `dc clean_process <project> --yes`: remove processed outputs and process-stage state, while keeping raw extracted data
 - `dc clean <project> --yes`: remove that project's local data directory
 
@@ -70,6 +73,7 @@ Visualization modes:
 
 - `dc visualize <project> --max-samples 24`: visualize a bounded sample count
 - `dc visualize <project> --all`: visualize the full processed dataset
+- `dc visualize <project> --dataset virtual_kitti_2`: visualize one enabled dataset only
 - `dc visualize <project> --samples-per-image 24 --sample-columns 4`: control grid density per output image
 
 ## Typical Workflow
@@ -129,6 +133,7 @@ dc process --config configs/default.json
 - `dc visualize` writes dense contact-sheet PNGs under `data/<project>/<metric-or-relative>/<dataset>/visualizations/`.
 - Each sample panel currently shows RGB, same-camera reprojection, a canonical distance map, and a z-depth map computed from `ray_dir * distance`.
 - `dc visualize` accepts either `--max-samples <N>` or `--all`.
+- `dc visualize --dataset <name>` restricts rendering to one enabled dataset; without it, visualization runs across all enabled datasets in the selected config.
 - By default, `dc visualize` behaves like `--max-samples 24 --samples-per-image 24 --sample-columns 4`.
 - Datasets are now partitioned on disk as `data/<project>/metric/<dataset>/...` or `data/<project>/relative/<dataset>/...` depending on scale semantics.
 - Hugging Face cache is stored per dataset under `data/<project>/<metric-or-relative>/<dataset>/.hf_cache/` instead of the global user cache.
