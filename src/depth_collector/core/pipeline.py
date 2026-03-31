@@ -43,7 +43,13 @@ class DatasetPipeline(ABC):
             dataset_config=self.dataset_config,
             paths=self.paths,
         )
-        self.validator = CanonicalSampleValidator(max_dist=config.project.max_dist)
+        self.validator = CanonicalSampleValidator(
+            max_dist=config.project.max_dist,
+            is_metric_scale=self.is_metric_scale(),
+            max_relative_far_distance_fraction=config.runtime.max_relative_far_distance_fraction,
+            min_metric_distance_std_m=config.runtime.min_metric_distance_std_m,
+            max_relative_distance_std=config.runtime.max_relative_distance_std,
+        )
         self.download_state = FileDownloadStateStore(self.paths.state / "downloads.jsonl")
         self.extraction_state = FileExtractionStateStore(self.paths.state / "extractions.jsonl")
         self.processing_state = FileProcessingStateStore(self.paths.state / "processed.jsonl")

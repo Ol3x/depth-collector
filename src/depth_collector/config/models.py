@@ -20,6 +20,9 @@ class RuntimeConfig:
     skip_known_errors: bool
     write_error_traces: bool
     target_shard_size_gb: float
+    max_relative_far_distance_fraction: float = 0.98
+    min_metric_distance_std_m: float = 0.1
+    max_relative_distance_std: float = 0.3
 
 
 @dataclass(frozen=True)

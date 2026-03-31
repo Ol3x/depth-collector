@@ -14,6 +14,12 @@ def validate_config(config: RootConfig) -> None:
         raise ValueError("runtime.process_ratio must lie in (0, 1]")
     if config.runtime.target_shard_size_gb <= 0.0:
         raise ValueError("runtime.target_shard_size_gb must be strictly positive")
+    if not 0.0 <= config.runtime.max_relative_far_distance_fraction <= 1.0:
+        raise ValueError("runtime.max_relative_far_distance_fraction must lie in [0, 1]")
+    if config.runtime.min_metric_distance_std_m <= 0.0:
+        raise ValueError("runtime.min_metric_distance_std_m must be strictly positive")
+    if not 0.0 <= config.runtime.max_relative_distance_std <= 1.0:
+        raise ValueError("runtime.max_relative_distance_std must lie in [0, 1]")
     if not config.datasets:
         raise ValueError("at least one dataset entry must be configured")
 

@@ -12,7 +12,10 @@
     "resume": true,
     "skip_known_errors": true,
     "write_error_traces": true,
-    "target_shard_size_gb": 1.0
+    "target_shard_size_gb": 1.0,
+    "max_relative_far_distance_fraction": 0.98,
+    "min_metric_distance_std_m": 0.1,
+    "max_relative_distance_std": 0.3
   },
   "output": {
     "root_data_dir": "data",
@@ -27,7 +30,7 @@
       "hf_dataset_id": "sayakpaul/nyu_depth_v2"
     },
     "diode_subset_train": {
-      "enabled": true,
+      "enabled": false,
       "hf_dataset_id": "sayakpaul/diode-subset-train",
       "archive_filename": "train_subset.tar.gz",
       "splits": [

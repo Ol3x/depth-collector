@@ -26,6 +26,9 @@ def load_config(path: str | Path) -> RootConfig:
     project = ProjectConfig(**data["project"])
     runtime_payload = dict(data["runtime"])
     runtime_payload.setdefault("download_workers", 2)
+    runtime_payload.setdefault("max_relative_far_distance_fraction", 0.98)
+    runtime_payload.setdefault("min_metric_distance_std_m", 0.1)
+    runtime_payload.setdefault("max_relative_distance_std", 0.3)
     runtime_payload.pop("download_ratio", None)
     if "process_ratio" not in runtime_payload and "processing_fraction" in runtime_payload:
         runtime_payload["process_ratio"] = runtime_payload.pop("processing_fraction")
