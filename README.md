@@ -1,4 +1,3 @@
-s
 # depth-collector
 A dataset factory for Monocular Depth Estimation resarch.
 
