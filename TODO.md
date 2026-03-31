@@ -8,8 +8,8 @@ Suggested restart prompt:
 
 ```text
 Continue the depth-collector work from the current repo state.
-Current status: the repo uses the micromamba env named depth-collector, exposes the dc CLI, supports download/extract/process/status/visualize/clean/clean_process, and the default project currently runs both TartanAir and TartanGround end to end with tiny ratios. The Tartan family abstraction is in place, both datasets download from Hugging Face, extract, enumerate paired image/depth data, convert to canonical distance plus ray_dir, write tar shards, and visualize successfully.
-Next target: move to the next roadmap priorities after the Tartan family, with Hypersim first.
+Current status: the repo uses the micromamba env named depth-collector, exposes the dc CLI, and now has working end-to-end pipelines for TartanAir, TartanGround, Hypersim, TopAir, ToF-360, UrbanSyn, Virtual KITTI 2, DIODE subset train, WMGStereo, and MegaDepth. The current roadmap question is no longer the Tartan family or Hypersim; it is what remaining candidate dataset should be implemented next.
+Next target: Structured3D. Current known blocker profile: the reviewed HF mirror appears to expose one ~307 GB reconstructed archive split into 308 ~1 GB fragments, so the true minimum-readable download is still effectively full-archive scale.
 ```
 
 ## Current State
@@ -19,18 +19,20 @@ Next target: move to the next roadmap priorities after the Tartan family, with H
 - `dc clean_process --yes` resets only process-stage artifacts and keeps raw extracted data.
 - `dc process` now rebuilds correctly after `clean_process`.
 - Visualization is in place for processed datasets.
+- `ToF-360` is working end to end, including shared equirectangular reprojection visualization.
+- `MegaDepth` is implemented, but its live HF packaging can still force bundle-scale minimum-readable acquisition.
 
 ## Next Priorities
 
 Based on the current implementation state and [pipeline_prioritization.md](/home/olx2024/repos/depth-collector/docs/research/pipeline_prioritization.md):
 
-1. Build the `Hypersim` pipeline.
-   - This is the documented `P0` target and should be the next major dataset integration.
-   - Reuse the existing pipeline abstractions instead of adding dataset-specific one-off flows.
+1. Build the `Structured3D` pipeline.
+   - This is the strongest remaining target with verifiable HF packaging.
+   - The main difficulty is that the reviewed HF mirror appears to require full-archive-scale acquisition even for minimum-readable correctness.
 
-2. After `Hypersim`, move to the strongest documented `P1` non-Tartan targets.
-   - `Pointcept/arkitscenes-compressed`
-   - `Gen3DF/Structured3d-preprocessed`
+2. Keep `MP3D-FPE` below `Structured3D` until access and packaging are verified.
+   - The main blocker is gated access rather than geometry value.
+   - Do not promote it to the next target until the real downloadable tree can be inspected or a better HF mirror is found.
 
 3. Keep refining family abstractions when new datasets justify them.
    - Do not let one concrete pipeline depend on another concrete pipeline.

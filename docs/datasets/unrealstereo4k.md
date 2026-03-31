@@ -1,0 +1,28 @@
+# UnrealStereo4K
+
+- Dataset: `fabiotosi92/UnrealStereo4K`
+- Reviewed: 2026-03-27
+- Hugging Face: https://huggingface.co/datasets/fabiotosi92/UnrealStereo4K
+- Domain: synthetic stereo indoor/outdoor scenes
+- Projection: pinhole stereo
+- Scale signal: medium to large
+- Geometry assessment: useful synthetic stereo source, but the reviewed HF quarter-resolution package does not expose the original extrinsics, so this pipeline should currently be treated as non-metric
+- Artifact risk: moderate; disparity quality depends on the reviewed preprocessed package rather than original full metadata
+- Canonical conversion difficulty: medium
+- License on HF card: not yet confirmed
+- Status: implemented
+- Priority tier: implemented exploratory stereo source
+- Why it matters: adds another synthetic stereo source with different visual distribution from WMGStereo while remaining operationally simpler than some scene-metadata-heavy datasets
+- Known issues:
+  - reviewed HF package appears to be quarter-resolution
+  - reviewed HF package omits original extrinsics, so trustworthy metric reconstruction is not currently available from the active source
+  - current pipeline therefore uses scene-relative inverse-disparity depth rather than metric depth
+- HF packaging notes: reviewed HF source exposes whole-scene `.zip` archives; the smallest visible source unit is `00008.zip`, about 881 MB
+- Minimum readable path:
+  - one selected scene archive is the active upstream unit
+  - current pipeline uses shared remote zip access to materialize a smaller local minimum-readable archive containing one left image plus its paired disparity file
+- Pipeline notes:
+  - current implementation reads left RGB plus paired left disparity only
+  - current implementation uses first-pass config-driven pinhole intrinsics, scaled to decoded image resolution
+  - current implementation converts disparity to relative pseudo-distance through inverse disparity, then normalizes valid pixels to `[0, 1]`
+  - provenance explicitly marks the output as `scene-relative` with `depth_semantics: "inverse_disparity_relative"`

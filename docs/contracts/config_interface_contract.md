@@ -31,6 +31,25 @@ The configuration should expose enough runtime intent to support resumable proce
 
 ## Dataset Entry Contract
 
+## Minimum Readable Definition
+
+IMPORTANT:
+
+`selection: "minimum_readable"` means the minimum amount of data that must be downloaded from the active upstream repository so that the pipeline can read and process at least one complete sample.
+
+It does not mean:
+
+- the smallest subset we wish the upstream repo exposed
+- the smallest subset after repackaging the upstream data differently
+- the smallest subset after assuming download capabilities the current source repo does not provide
+
+It does mean:
+
+- the smallest real source-backed acquisition path available from the current repo packaging
+- even when that minimum real path is operationally large
+
+## Dataset Entry Contract
+
 Every dataset entry should support at least:
 
 - `enabled`
@@ -49,7 +68,7 @@ The shared `selection` field is mandatory and must support exactly:
 - `"all"`
 - a float in `(0, 1]`
 
-`"minimum_readable"` means the pipeline must choose the smallest source subset that still yields at least one readable `(image, distance, ray_dir)` sample.
+`"minimum_readable"` means the pipeline must choose the smallest source-backed subset that still yields at least one readable `(image, distance, ray_dir)` sample.
 
 ## Shared Runtime Expectations
 

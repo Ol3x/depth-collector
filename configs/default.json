@@ -26,12 +26,12 @@
   },
   "datasets": {
     "nyu_depth_v2": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "sayakpaul/nyu_depth_v2",
       "selection": "minimum_readable"
     },
     "diode_subset_train": {
-      "enabled": true,
+      "enabled": false,
       "hf_dataset_id": "sayakpaul/diode-subset-train",
       "selection": "minimum_readable",
       "archive_filename": "train_subset.tar.gz",
@@ -50,7 +50,7 @@
       }
     },
     "hypersim": {
-      "enabled": true,
+      "enabled": false,
       "hf_dataset_id": "ritianyu/Hypersim",
       "selection": "minimum_readable",
       "download_mode": "directory",
@@ -178,7 +178,7 @@
       }
     },
     "tof_360": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "COLE-Ricoh/ToF-360",
       "selection": "minimum_readable",
       "scenes": "*",
@@ -204,6 +204,12 @@
         "cx": 1024.0,
         "cy": 512.0
       }
+    },
+    "unrealstereo4k": {
+      "enabled": true,
+      "hf_dataset_id": "fabiotosi92/UnrealStereo4K",
+      "selection": "minimum_readable",
+      "archives": "*"
     },
     "wmg_stereo_flying": {
       "enabled": true,

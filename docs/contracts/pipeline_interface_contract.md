@@ -4,6 +4,18 @@ This document defines the expected boundary between dataset-specific pipeline co
 
 New dataset integrations should also follow [new_pipeline_guidelines.md](/home/olx2024/repos/depth-collector/docs/contracts/new_pipeline_guidelines.md), especially the requirements around `selection`, minimum readable sample support, full-dataset-capable config design, and stopping when the available source artifact is the wrong type for this repository.
 
+## Minimum Readable Definition
+
+IMPORTANT:
+
+Within this repository, `selection: "minimum_readable"` means the minimum amount of data that must be downloaded from the current source repository in order to read and process at least one complete `(image, distance, ray_dir)` sample.
+
+This is a source-packaging definition.
+
+- if the source repo exposes a tiny per-sample path, `minimum_readable` should use it
+- if the source repo only exposes a large natural unit, that large unit is still the correct `minimum_readable` download
+- pipeline reviews must judge `minimum_readable` against the real upstream packaging, not against an imagined smaller upstream subset
+
 ## Dataset Pipeline Responsibilities
 
 Dataset pipelines should:
@@ -51,7 +63,7 @@ In many datasets, this should be one frame or one image-depth pair rather than a
 
 The pipeline must also define how its candidate pool is ordered so that:
 
-- `"minimum_readable"` yields the smallest readable `(image, distance, ray_dir)` path
+- `"minimum_readable"` yields the smallest readable `(image, distance, ray_dir)` path that the current source packaging actually allows
 - ratio selection yields a deterministic prefix of the ordered candidate pool
 
 ## Error Boundary

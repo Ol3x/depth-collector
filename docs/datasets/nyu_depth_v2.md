@@ -4,15 +4,21 @@
 - Reviewed: 2026-03-27
 - Hugging Face: https://huggingface.co/datasets/sayakpaul/nyu_depth_v2
 - Domain: indoor, real RGB-D
-- Projection: likely standard perspective RGB-D capture
+- Projection: pinhole RGB-D capture
 - Scale signal: small
 - Geometry assessment: legacy indoor RGB-D source with weak geometric quality for this project
 - Artifact risk: high concern for flying 3D points and unreliable filled-depth regions
 - Canonical conversion difficulty: low to medium
 - License on HF card: Apache-2.0 for the HF package, with card text also referring to original/preprocessed dataset licensing
-- Status: candidate
+- Status: implemented
 - Priority tier: P2
 - Why it matters: still useful as a low-friction legacy/debugging indoor dataset
 - Known issues: small scale; not likely to be a long-term anchor dataset by itself; geometry quality is not strong enough for a top-priority role here
-- HF packaging notes: custom HF dataset script over `.tar` shards containing `.h5` payloads
-- Pipeline notes: likely straightforward streaming pipeline, but the project should treat it as a convenience/debugging target rather than a high-value geometry target
+- HF packaging notes: reviewed HF source exposes `data/*.tar` shards containing `.h5` samples; the current pipeline treats one complete shard as the source-backed minimum-readable unit
+- Minimum readable path: one shard such as `data/val-000001.tar` from the active HF repo; on the reviewed tree that shard is about 14.8 MB
+- Pipeline notes:
+  - current implementation downloads complete shard units through shared HF helpers, extracts them locally, and decodes per-sample HDF5 payloads
+  - the pipeline assumes pinhole intrinsics using the standard NYU RGB calibration values, scaled to the decoded image resolution
+  - the default interpretation is `depth_semantics: "z_depth"`, converted to canonical radial distance with shared geometry helpers
+  - `image_dataset_key` and `depth_dataset_key` remain overrideable in config in case a future HF package changes the HDF5 key names
+  - this should still be treated as a convenience/debugging dataset rather than a high-value geometry anchor

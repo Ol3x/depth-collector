@@ -98,6 +98,31 @@ class ToF360PipelineTest(unittest.TestCase):
         depth = np.full((4, 8), 512, dtype=np.uint16)
         Image.fromarray(depth).save(depth_root / f"{frame_id}.png")
 
+    def _write_scene_tree_with_extra_frames(
+        self,
+        root: Path,
+        *,
+        scene_name: str = "scene_0001",
+    ) -> None:
+        rgb_root = root / scene_name / "rgb"
+        depth_root = root / scene_name / "depth"
+        rgb_root.mkdir(parents=True, exist_ok=True)
+        depth_root.mkdir(parents=True, exist_ok=True)
+
+        first_image = np.zeros((4, 8, 3), dtype=np.uint8)
+        first_image[..., 0] = 64
+        Image.fromarray(first_image).save(rgb_root / "frame_0001.png")
+
+        first_depth = np.full((4, 8), 512, dtype=np.uint16)
+        Image.fromarray(first_depth).save(depth_root / "frame_0001.png")
+
+        second_image = np.zeros((4, 8, 3), dtype=np.uint8)
+        second_image[..., 1] = 255
+        Image.fromarray(second_image).save(rgb_root / "frame_0002.png")
+
+        second_depth = np.full((4, 8), 768, dtype=np.uint16)
+        Image.fromarray(second_depth).save(depth_root / "frame_0002.png")
+
     def test_all_scene_selector_discovers_remote_scenes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
@@ -119,7 +144,7 @@ class ToF360PipelineTest(unittest.TestCase):
             pipeline = self._make_pipeline(tmp_dir)
             with tempfile.TemporaryDirectory() as source_dir:
                 source_root = Path(source_dir)
-                self._write_scene_tree(source_root)
+                self._write_scene_tree_with_extra_frames(source_root)
                 pipeline.dataset_config.options["local_archive_root"] = str(source_root)
 
                 unit = ToF360SceneUnit(scene_name="scene_0001")
@@ -127,10 +152,61 @@ class ToF360PipelineTest(unittest.TestCase):
 
             self.assertTrue((pipeline.paths.raw / "scene_0001" / "rgb" / "frame_0001.png").exists())
             self.assertTrue((pipeline.paths.raw / "scene_0001" / "depth" / "frame_0001.png").exists())
+            self.assertFalse((pipeline.paths.raw / "scene_0001" / "rgb" / "frame_0002.png").exists())
+            self.assertFalse((pipeline.paths.raw / "scene_0001" / "depth" / "frame_0002.png").exists())
 
-    def test_remote_download_requests_whole_scene_folder(self) -> None:
+    def test_remote_minimum_readable_download_requests_one_frame_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
+            unit = ToF360SceneUnit(scene_name="scene_0001")
+            with patch.object(
+                pipeline,
+                "hf_list_repo_files",
+                return_value=[
+                    "scene_0001/rgb/frame_0001.png",
+                    "scene_0001/depth/frame_0001.png",
+                    "scene_0001/rgb/frame_0002.png",
+                    "scene_0001/depth/frame_0002.png",
+                ],
+            ):
+                with patch.object(pipeline, "hf_snapshot_download") as download_mock:
+                    pipeline.download_unit(unit)
+
+            download_mock.assert_called_once()
+            self.assertEqual(
+                sorted(download_mock.call_args.kwargs["allow_patterns"]),
+                ["scene_0001/depth/frame_0001.png", "scene_0001/rgb/frame_0001.png"],
+            )
+
+    def test_remote_minimum_readable_download_matches_nested_case_insensitive_modalities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            unit = ToF360SceneUnit(scene_name="scene_0001")
+            with patch.object(
+                pipeline,
+                "hf_list_repo_files",
+                return_value=[
+                    "scene_0001/Raw/Manhattan/000_Hospital_equi_manhattan.png",
+                    "scene_0001/Derived/Depth/000_Hospital_equi_depth.png",
+                ],
+            ):
+                with patch.object(pipeline, "hf_snapshot_download") as download_mock:
+                    pipeline.download_unit(unit)
+
+            download_mock.assert_called_once()
+            self.assertEqual(
+                sorted(download_mock.call_args.kwargs["allow_patterns"]),
+                [
+                    "scene_0001/Derived/Depth/000_Hospital_equi_depth.png",
+                    "scene_0001/Raw/Manhattan/000_Hospital_equi_manhattan.png",
+                ],
+            )
+
+    def test_remote_all_download_requests_whole_scene_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            config_path.write_text(json.dumps(self._make_config(tmp_dir, selection="all")))
+            pipeline = ToF360Pipeline(load_config(config_path), "tof_360")
             unit = ToF360SceneUnit(scene_name="scene_0001")
 
             with patch.object(pipeline, "hf_snapshot_download") as download_mock:
@@ -167,6 +243,28 @@ class ToF360PipelineTest(unittest.TestCase):
 
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0].image_relative_path, "scene_0001/manhattan/frame_0001.png")
+
+    def test_enumerate_source_items_resolves_case_insensitive_scene_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            scene_root = pipeline.paths.raw / "scene_0001"
+            rgb_root = scene_root / "RGB"
+            depth_root = scene_root / "Depth"
+            rgb_root.mkdir(parents=True, exist_ok=True)
+            depth_root.mkdir(parents=True, exist_ok=True)
+
+            image = np.zeros((4, 8, 3), dtype=np.uint8)
+            image[..., 2] = 255
+            Image.fromarray(image).save(rgb_root / "frame_0001.png")
+
+            depth = np.full((4, 8), 512, dtype=np.uint16)
+            Image.fromarray(depth).save(depth_root / "frame_0001.png")
+
+            items = list(pipeline.enumerate_source_items())
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].image_relative_path, "scene_0001/RGB/frame_0001.png")
+            self.assertEqual(items[0].depth_relative_path, "scene_0001/Depth/frame_0001.png")
 
     def test_enumerate_source_items_matches_depth_and_rgb_suffix_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

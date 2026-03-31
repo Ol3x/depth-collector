@@ -64,7 +64,7 @@ class ToF360Pipeline(DatasetPipeline):
                 continue
             if self._resolve_rgb_root(path) is None:
                 continue
-            if not (path / self._depth_dir_name()).exists():
+            if self._resolve_depth_root(path) is None:
                 continue
             scene_names.append(path.name)
         return scene_names
@@ -93,6 +93,9 @@ class ToF360Pipeline(DatasetPipeline):
                 scenes = self._discover_scene_names_from_remote()
         return [str(scene_name) for scene_name in self.apply_dataset_selection(scenes)]
 
+    def _is_minimum_readable_selection(self) -> bool:
+        return self.dataset_selection() == self.MINIMUM_READABLE_SELECTION
+
     def _rgb_dir_name(self) -> str:
         return str(self.dataset_config.options.get("rgb_dir", "rgb"))
 
@@ -109,15 +112,81 @@ class ToF360Pipeline(DatasetPipeline):
                 return names
         return ("rgb", "manhattan", "manhattan_rgb", "rgb_manhattan", "color", "albedo")
 
-    def _resolve_rgb_root(self, scene_root: Path) -> Path | None:
-        configured_root = scene_root / self._rgb_dir_name()
-        if configured_root.exists():
-            return configured_root
-        for name in self._candidate_rgb_dir_names():
-            candidate = scene_root / name
-            if candidate.exists():
-                return candidate
+    def _resolve_named_child_dir(self, root: Path, names: tuple[str, ...]) -> Path | None:
+        preferred = {name.lower() for name in names if name}
+        if not preferred or not root.exists():
+            return None
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            if child.name.lower() in preferred:
+                return child
         return None
+
+    def _resolve_rgb_root(self, scene_root: Path) -> Path | None:
+        return self._resolve_named_child_dir(scene_root, (self._rgb_dir_name(), *self._candidate_rgb_dir_names()))
+
+    def _resolve_depth_root(self, scene_root: Path) -> Path | None:
+        return self._resolve_named_child_dir(scene_root, (self._depth_dir_name(),))
+
+    def _image_like_suffix(self, path: Path) -> bool:
+        return path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+
+    def _minimum_readable_relative_paths_from_root(self, root: Path, scene_name: str) -> list[Path]:
+        scene_root = root / scene_name
+        rgb_root = self._resolve_rgb_root(scene_root)
+        depth_root = self._resolve_depth_root(scene_root)
+        if rgb_root is None or not depth_root.exists():
+            raise FileNotFoundError(f"missing ToF-360 minimum-readable source directories under {scene_root}")
+
+        depth_by_frame = {
+            self._frame_id_from_depth_path(path): path.relative_to(root)
+            for path in sorted(depth_root.rglob("*"))
+            if path.is_file() and path.suffix.lower() == ".png"
+        }
+        for image_path in sorted(rgb_root.rglob("*")):
+            if not image_path.is_file() or not self._image_like_suffix(image_path):
+                continue
+            frame_id = self._frame_id_from_image_path(image_path)
+            depth_relative_path = depth_by_frame.get(frame_id)
+            if depth_relative_path is None:
+                continue
+            return [
+                image_path.relative_to(root),
+                depth_relative_path,
+            ]
+        raise FileNotFoundError(f"could not identify a minimum-readable ToF-360 sample under {scene_root}")
+
+    def _minimum_readable_repo_paths(self, scene_name: str) -> list[str]:
+        prefix = f"{scene_name}/"
+        repo_files = [repo_path for repo_path in self._remote_repo_files() if repo_path.startswith(prefix)]
+        depth_dir_name = self._depth_dir_name().lower()
+        candidate_rgb_dir_names = {name.lower() for name in self._candidate_rgb_dir_names()} | {
+            self._rgb_dir_name().lower()
+        }
+
+        depth_by_frame = {
+            self._frame_id_from_depth_path(Path(repo_path)): repo_path
+            for repo_path in sorted(repo_files)
+            if len(Path(repo_path).parts) >= 3
+            and Path(repo_path).parts[0] == scene_name
+            and any(part.lower() == depth_dir_name for part in Path(repo_path).parts[1:-1])
+            and Path(repo_path).suffix.lower() == ".png"
+        }
+        for repo_path in sorted(repo_files):
+            path = Path(repo_path)
+            if len(path.parts) < 3 or path.parts[0] != scene_name:
+                continue
+            if not any(part.lower() in candidate_rgb_dir_names for part in path.parts[1:-1]) or not self._image_like_suffix(
+                path
+            ):
+                continue
+            frame_id = self._frame_id_from_image_path(path)
+            depth_repo_path = depth_by_frame.get(frame_id)
+            if depth_repo_path is None:
+                continue
+            return [repo_path, depth_repo_path]
+        raise FileNotFoundError(f"could not identify a remote minimum-readable ToF-360 sample for {scene_name}")
 
     def enumerate_download_units(self) -> Iterable[ToF360SceneUnit]:
         for scene_name in self._selected_scene_names():
@@ -126,18 +195,29 @@ class ToF360Pipeline(DatasetPipeline):
     def download_unit(self, unit: ToF360SceneUnit) -> None:
         local_archive_root = self.dataset_config.options.get("local_archive_root")
         if local_archive_root:
-            source_root = Path(str(local_archive_root)) / unit.scene_name
+            local_root = Path(str(local_archive_root))
+            source_root = local_root / unit.scene_name
             if not source_root.exists():
                 raise FileNotFoundError(f"missing local ToF-360 scene source: {source_root}")
+            if self._is_minimum_readable_selection():
+                for relative_path in self._minimum_readable_relative_paths_from_root(local_root, unit.scene_name):
+                    destination_path = self.paths.raw / relative_path
+                    destination_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(local_root / relative_path, destination_path)
+                return
             shutil.copytree(source_root, self.paths.raw / unit.scene_name, dirs_exist_ok=True)
             return
 
+        if self._is_minimum_readable_selection():
+            allow_patterns = self._minimum_readable_repo_paths(unit.scene_name)
+        else:
+            allow_patterns = [f"{unit.scene_name}/**"]
         self.hf_snapshot_download(
             repo_id=self.dataset_config.hf_dataset_id,
             repo_type="dataset",
             revision=self.dataset_config.revision,
             local_dir=self.paths.raw,
-            allow_patterns=[f"{unit.scene_name}/**"],
+            allow_patterns=allow_patterns,
         )
 
     def enumerate_extraction_units(self) -> Iterable[object]:
@@ -151,7 +231,7 @@ class ToF360Pipeline(DatasetPipeline):
         for scene_name in self._selected_scene_names():
             scene_root = self.paths.raw / scene_name
             rgb_root = self._resolve_rgb_root(scene_root)
-            depth_root = scene_root / self._depth_dir_name()
+            depth_root = self._resolve_depth_root(scene_root)
             if rgb_root is None:
                 available_dirs = sorted(path.name for path in scene_root.iterdir() if path.is_dir()) if scene_root.exists() else []
                 self.record_error(
@@ -160,8 +240,9 @@ class ToF360Pipeline(DatasetPipeline):
                     f"missing ToF-360 RGB directory under {scene_root}; available_dirs={available_dirs}",
                 )
                 continue
-            if not depth_root.exists():
-                self.record_error("enumeration", scene_name, f"missing ToF-360 depth directory: {depth_root}")
+            if depth_root is None or not depth_root.exists():
+                expected_depth_root = scene_root / self._depth_dir_name()
+                self.record_error("enumeration", scene_name, f"missing ToF-360 depth directory: {expected_depth_root}")
                 continue
 
             depth_by_frame_id = {
@@ -340,9 +421,10 @@ class ToF360Pipeline(DatasetPipeline):
         assert isinstance(unit, ToF360SceneUnit)
         scene_root = self.paths.raw / unit.scene_name
         rgb_root = self._resolve_rgb_root(scene_root)
-        depth_root = scene_root / self._depth_dir_name()
+        depth_root = self._resolve_depth_root(scene_root)
         return (
             rgb_root is not None
+            and depth_root is not None
             and depth_root.exists()
             and any(path.is_file() for path in rgb_root.rglob("*"))
             and any(path.is_file() for path in depth_root.rglob("*"))

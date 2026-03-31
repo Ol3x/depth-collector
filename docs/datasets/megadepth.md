@@ -28,6 +28,7 @@
 
 - The repository includes a MegaDepth pipeline and config contract, but this dataset should still be treated as a candidate until the full live acquisition path is exercised more broadly.
 - The current pipeline model uses bundle downloads plus scene selection from scene-info metadata.
+- When the remote source exposes direct per-scene files, `selection: "minimum_readable"` now materializes a reduced local scene-info file plus one image/depth pair for the first selected readable scene.
 
 ## Minimum Readable Selection
 
@@ -35,6 +36,7 @@
   - source RGB
   - usable depth or reconstruction-derived geometry
   - camera metadata sufficient to derive canonical `ray_dir`
-- In the current pipeline shape, that usually means one scene from the ordered scene pool and one bundle from the ordered bundle pool.
+- In scene-file mode, that now means one scene-info file reduced to one sample plus one image/depth pair.
+- In bundle-only mode, the natural acquisition unit is still the multipart bundle, so the current smoke-run path remains operationally heavier than scene-file mode.
 - `selection: "all"` means all selected scenes and bundles.
 - A ratio in `(0, 1]` means the corresponding prefix of the ordered candidate pools.

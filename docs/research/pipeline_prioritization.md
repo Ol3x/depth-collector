@@ -126,7 +126,7 @@ High-value datasets whose minimum readable selection paths are currently known t
 Datasets whose minimum complete units remain strategically important but not yet well verified in this repository include:
 
 - `Taskonomy`
-- `MegaDepth`
+- `MP3D-FPE`
 
 For the specifically high-value datasets reinforced by the MoGe 2-style training evidence, the current acquisition-unit picture is:
 
@@ -189,12 +189,13 @@ As of the current repository state:
   - `sayakpaul/diode-subset-train`
   - `ZhengGuangze/VKITTI2_vlbm`
   - `ssbai/MegaDepth_v1`
+  - `fabiotosi92/UnrealStereo4K`
   - `princeton-vl/WMGStereo`
 
 The remaining priority tiers for new integration work are therefore:
 
-- `P1`: `COLE-Ricoh/ToF-360`, `Gen3DF/Structured3d-preprocessed`
-- `P2`: `sayakpaul/nyu_depth_v2`, `EnriqueSolarte/mp3d_fpe`
+- `P1`: `Gen3DF/Structured3d-preprocessed`
+- `P2`: `EnriqueSolarte/mp3d_fpe`
 
 Strategic watchlist:
 
@@ -204,14 +205,35 @@ This list is intentionally provisional and should change as we inspect file layo
 
 Current implementation-risk ordering inside the strongest remaining `P1` group:
 
-1. `COLE-Ricoh/ToF-360`
-2. `Gen3DF/Structured3d-preprocessed`
+1. `Gen3DF/Structured3d-preprocessed`
 
 Interpretation note:
 
 - `Hypersim` and `TartanAir` were the original early high-priority synthetic targets and are now already implemented.
-- `TartanGround`, `UrbanSyn`, `TopAir`, and `Virtual KITTI 2` also exist in the repository, but their presence does not by itself reorder the remaining unimplemented `P1` targets beyond removing them from the unimplemented list.
+- `TartanGround`, `UrbanSyn`, `TopAir`, `Virtual KITTI 2`, `ToF-360`, `NYU Depth V2`, and `UnrealStereo4K` also exist in the repository, so they are no longer remaining target candidates.
 - modern training-table recurrence, including the MoGe 2 dataset list above, strengthens the case that `ARKitScenes`, `Structured3D`, `MegaDepth`, `Hypersim`, `TartanAir`, and `UrbanSyn` are genuinely high-value datasets rather than incidental candidates.
-- among the remaining unimplemented targets, `ToF-360` still adds useful camera-model diversity, but its live HF packaging proved materially heavier than expected. `Structured3D` remains strategically strong despite its heavy acquisition unit.
+- `Structured3D` remains the strongest next strategic target even though the reviewed HF packaging appears to require the full ~307 GB reconstructed archive path for minimum-readable correctness.
+- The specific difficulty we confirmed is that the reviewed HF mirror is one giant archive split into 308 fragment files, not a set of independently readable scene units. So downloading only some of those parts is not a valid smaller `minimum_readable` path.
+- `MP3D-FPE` is currently blocked as a next target by gated access: the public HF evidence does not expose enough of the file tree to verify the real minimum-readable unit or even confirm that a source-backed download path can be implemented cleanly.
+- `MegaDepth` is implemented, but the live HF packaging can still force bundle-scale minimum-readable acquisition. That is acceptable under the repository definition, but it makes MegaDepth a poor default smoke-run target rather than a next integration target.
+
+## Current Recommendation
+
+The next target should be:
+
+1. `Gen3DF/Structured3d-preprocessed`
+
+Why:
+
+- it is the strongest remaining high-value dataset with verifiable HF packaging
+- its geometry value is high enough to justify heavy acquisition cost
+- unlike `MP3D-FPE`, it is not blocked by gated-access uncertainty
+
+Current known difficulties:
+
+- the reviewed HF mirror is a split raw archive, not a scene-structured dataset
+- `minimum_readable` appears to require the full ~307 GB archive path because the 308 ~1 GB parts are partial fragments, not independently readable units
+- trying to download only a subset of those split parts is not a valid source-backed route to one guaranteed readable sample
+- implementation will therefore need to be honest about very large minimum-readable acquisition cost rather than trying to fake a tiny smoke run
 
 Roadmap changes should ideally be preceded by a documented triage pass rather than ad hoc promotion.

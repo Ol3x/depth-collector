@@ -99,6 +99,62 @@ class MegaDepthPipelineTest(unittest.TestCase):
             intrinsics=intrinsics,
         )
 
+    def _write_scene_layout_with_extra_sample(self, root: Path) -> None:
+        first_image_path = root / "Undistorted_SfM" / "0015" / "images" / "img0000.jpg"
+        second_image_path = root / "Undistorted_SfM" / "0015" / "images" / "img0001.jpg"
+        first_depth_path = root / "phoenix" / "0015" / "depths" / "img0000.h5"
+        second_depth_path = root / "phoenix" / "0015" / "depths" / "img0001.h5"
+        scene_info_path = root / "prep_scene_info" / "0015.npz"
+
+        first_image_path.parent.mkdir(parents=True, exist_ok=True)
+        first_depth_path.parent.mkdir(parents=True, exist_ok=True)
+        scene_info_path.parent.mkdir(parents=True, exist_ok=True)
+
+        first_image = np.zeros((4, 6, 3), dtype=np.uint8)
+        first_image[..., 0] = 64
+        Image.fromarray(first_image).save(first_image_path)
+
+        second_image = np.zeros((4, 6, 3), dtype=np.uint8)
+        second_image[..., 1] = 255
+        Image.fromarray(second_image).save(second_image_path)
+
+        self._write_hdf5(first_depth_path, np.full((4, 6), 2.0, dtype=np.float32))
+        self._write_hdf5(second_depth_path, np.full((4, 6), 3.0, dtype=np.float32))
+
+        intrinsics = np.array(
+            [
+                [
+                    [4.0, 0.0, 3.0],
+                    [0.0, 4.0, 2.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                [
+                    [5.0, 0.0, 3.0],
+                    [0.0, 5.0, 2.0],
+                    [0.0, 0.0, 1.0],
+                ],
+            ],
+            dtype=np.float32,
+        )
+        np.savez(
+            scene_info_path,
+            image_paths=np.array(
+                [
+                    "Undistorted_SfM/0015/images/img0000.jpg",
+                    "Undistorted_SfM/0015/images/img0001.jpg",
+                ],
+                dtype=object,
+            ),
+            depth_paths=np.array(
+                [
+                    "phoenix/0015/depths/img0000.h5",
+                    "phoenix/0015/depths/img0001.h5",
+                ],
+                dtype=object,
+            ),
+            intrinsics=intrinsics,
+        )
+
     def test_enumerate_and_build_sample(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
@@ -243,14 +299,49 @@ class MegaDepthPipelineTest(unittest.TestCase):
             self.assertTrue((pipeline.paths.raw / "phoenix" / "0015" / "depths" / "img0000.h5").exists())
             self.assertEqual(tuple(pipeline.enumerate_extraction_units()), ())
 
-    def test_minimum_readable_selection_still_selects_complete_bundle_unit(self) -> None:
+    def test_minimum_readable_scene_file_download_materializes_one_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory() as source_dir:
+                pipeline = self._make_pipeline(tmp_dir)
+                source_root = Path(source_dir)
+                self._write_scene_layout_with_extra_sample(source_root)
+
+                repo_files = [
+                    "prep_scene_info/0015.npz",
+                    "Undistorted_SfM/0015/images/img0000.jpg",
+                    "Undistorted_SfM/0015/images/img0001.jpg",
+                    "phoenix/0015/depths/img0000.h5",
+                    "phoenix/0015/depths/img0001.h5",
+                ]
+
+                def fake_download_hf_file(repo_id: str, repo_path: str, target_path: Path) -> Path:
+                    del repo_id
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_root / repo_path, target_path)
+                    return target_path
+
+                with patch.object(pipeline, "_list_hf_files", return_value=repo_files):
+                    units = list(pipeline.enumerate_download_units())
+                    self.assertEqual(units, [MegaDepthDownloadUnit(unit_name="0015")])
+                    with patch.object(pipeline, "_download_hf_file", side_effect=fake_download_hf_file):
+                        pipeline.download_unit(units[0])
+
+                scene_info = np.load(pipeline.paths.raw / "prep_scene_info" / "0015.npz", allow_pickle=True)
+                self.assertEqual(scene_info["image_paths"].tolist(), ["Undistorted_SfM/0015/images/img0000.jpg"])
+                self.assertEqual(scene_info["depth_paths"].tolist(), ["phoenix/0015/depths/img0000.h5"])
+                self.assertEqual(np.asarray(scene_info["intrinsics"]).shape[0], 1)
+                self.assertTrue((pipeline.paths.raw / "Undistorted_SfM" / "0015" / "images" / "img0000.jpg").exists())
+                self.assertTrue((pipeline.paths.raw / "phoenix" / "0015" / "depths" / "img0000.h5").exists())
+                self.assertFalse((pipeline.paths.raw / "Undistorted_SfM" / "0015" / "images" / "img0001.jpg").exists())
+                self.assertFalse((pipeline.paths.raw / "phoenix" / "0015" / "depths" / "img0001.h5").exists())
+
+    def test_minimum_readable_bundle_mode_still_selects_complete_bundle_unit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             payload = self._make_config(tmp_dir)
             payload["datasets"]["megadepth"]["bundles"] = ["megadepth_bundle", "megadepth_bundle_2"]
             config_path = Path(tmp_dir) / "config.json"
             config_path.write_text(json.dumps(payload))
             pipeline = MegaDepthPipeline(load_config(config_path), "megadepth")
-
             repo_files = [
                 "MegaDepth_v1.tar.gz_part00",
                 "MegaDepth_v1.tar.gz_part01",

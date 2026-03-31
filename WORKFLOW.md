@@ -149,6 +149,16 @@ This also applies to acquisition:
 
 ## Tiny-Run Behavior
 
+IMPORTANT:
+
+For this repository, `selection: "minimum_readable"` means the minimum amount of data that must be downloaded from the current source repository so that at least one complete sample can be read and processed.
+
+This is not an "ideal tiny subset" definition.
+
+- if the source repo exposes only a large natural unit, that large unit is still the correct `minimum_readable` download
+- if the source repo exposes a smaller directly acquirable per-sample or per-frame path, the pipeline should use that smaller path
+- discussions of whether a pipeline satisfies the `minimum_readable` rule must be based on the real upstream packaging
+
 The runtime distinguishes:
 
 - dataset-specific `selection` controls
@@ -160,7 +170,7 @@ The runtime distinguishes:
 For dataset download selection:
 
 - every dataset config must provide `selection`
-- `selection: "minimum_readable"` means the pipeline must select the smallest candidate set that still yields at least one readable `(image, distance, ray_dir)` sample
+- `selection: "minimum_readable"` means the pipeline must select the smallest source-backed candidate set that still yields at least one readable `(image, distance, ray_dir)` sample
 - `selection: "all"` means the pipeline must use the full candidate pool
 - a float in `(0, 1]` means the pipeline must use that fraction of the ordered candidate pool, rounded up so a non-empty candidate pool still yields at least one useful unit
 - candidate-unit lists may use `"*"` or `"all"` to request all discoverable units, with `selection` then deciding how much of that pool is used

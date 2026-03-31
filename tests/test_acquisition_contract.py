@@ -6,10 +6,13 @@ from unittest.mock import patch
 
 from tests import _bootstrap  # noqa: F401
 from depth_collector.config import load_config
-from depth_collector.datasets import HypersimPipeline, MegaDepthPipeline, TartanAirPipeline, TartanGroundPipeline
+from depth_collector.datasets import HypersimPipeline, MegaDepthPipeline, NYUDepthV2Pipeline, TartanAirPipeline, TartanGroundPipeline
+from depth_collector.datasets import UnrealStereo4KPipeline
 from depth_collector.datasets.diode import DIODEArchiveUnit, DIODEPipeline
 from depth_collector.datasets.hypersim import HypersimSceneUnit
 from depth_collector.datasets.megadepth import MegaDepthDownloadUnit
+from depth_collector.datasets.nyu_depth_v2 import NYUDepthV2ArchiveUnit
+from depth_collector.datasets.unrealstereo4k import UnrealStereo4KArchiveUnit
 from depth_collector.datasets.tartanair import TartanAirArchiveUnit
 from depth_collector.datasets.tartanground import TartanGroundArchiveUnit
 from depth_collector.datasets.topair import TopAirPipeline, TopAirTrajectoryUnit
@@ -66,7 +69,9 @@ class AcquisitionContractTest(unittest.TestCase):
             Path("src/depth_collector/datasets/diode.py"),
             Path("src/depth_collector/datasets/hypersim.py"),
             Path("src/depth_collector/datasets/megadepth.py"),
+            Path("src/depth_collector/datasets/nyu_depth_v2.py"),
             Path("src/depth_collector/datasets/topair.py"),
+            Path("src/depth_collector/datasets/unrealstereo4k.py"),
             Path("src/depth_collector/datasets/tof_360.py"),
             Path("src/depth_collector/datasets/urbansyn.py"),
             Path("src/depth_collector/datasets/virtual_kitti_2.py"),
@@ -97,8 +102,10 @@ class AcquisitionContractTest(unittest.TestCase):
             Path("src/depth_collector/datasets/diode.py"),
             Path("src/depth_collector/datasets/hypersim.py"),
             Path("src/depth_collector/datasets/megadepth.py"),
+            Path("src/depth_collector/datasets/nyu_depth_v2.py"),
             Path("src/depth_collector/datasets/tartan.py"),
             Path("src/depth_collector/datasets/topair.py"),
+            Path("src/depth_collector/datasets/unrealstereo4k.py"),
             Path("src/depth_collector/datasets/tof_360.py"),
             Path("src/depth_collector/datasets/urbansyn.py"),
             Path("src/depth_collector/datasets/virtual_kitti_2.py"),
@@ -333,7 +340,34 @@ class AcquisitionContractTest(unittest.TestCase):
             )
             pipeline = ToF360Pipeline(load_config(config_path), "tof_360")
             unit = ToF360SceneUnit(scene_name="scene_0001")
-            with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
+            with patch.object(
+                pipeline,
+                "hf_list_repo_files",
+                return_value=[
+                    "scene_0001/rgb/frame_0001.png",
+                    "scene_0001/depth/frame_0001.png",
+                ],
+            ):
+                with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
+                    with self.assertRaises(_HfHelperCalled):
+                        pipeline.download_unit(unit)
+
+    def test_nyu_depth_v2_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "nyu_depth_v2": {
+                        "enabled": True,
+                        "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                        "selection": "minimum_readable",
+                        "shards": ["val-000001.tar"],
+                    }
+                },
+            )
+            pipeline = NYUDepthV2Pipeline(load_config(config_path), "nyu_depth_v2")
+            unit = NYUDepthV2ArchiveUnit(repo_path="data/val-000001.tar")
+            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
 
@@ -384,6 +418,25 @@ class AcquisitionContractTest(unittest.TestCase):
             pipeline = VirtualKITTI2Pipeline(load_config(config_path), "virtual_kitti_2")
             unit = VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")
             with patch.object(pipeline, "hf_open_remote_file", side_effect=_HfHelperCalled):
+                with self.assertRaises(_HfHelperCalled):
+                    pipeline.download_unit(unit)
+
+    def test_unrealstereo4k_remote_download_uses_hf_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = self._write_config(
+                tmp_dir,
+                {
+                    "unrealstereo4k": {
+                        "enabled": True,
+                        "hf_dataset_id": "fabiotosi92/UnrealStereo4K",
+                        "selection": "minimum_readable",
+                        "archives": ["00008.zip"],
+                    }
+                },
+            )
+            pipeline = UnrealStereo4KPipeline(load_config(config_path), "unrealstereo4k")
+            unit = UnrealStereo4KArchiveUnit(archive_name="00008.zip", repo_path="00008.zip")
+            with patch.object(pipeline, "hf_open_remote_zip", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
 

@@ -505,11 +505,19 @@ class MegaDepthPipeline(DatasetPipeline):
         if not source_scene_info.exists():
             raise FileNotFoundError(f"missing MegaDepth scene info for scene {unit.unit_name}: {source_scene_info}")
         scene_info = np.load(source_scene_info, allow_pickle=True)
-        image_paths = self._as_string_list(scene_info["image_paths"])
-        depth_paths = self._as_string_list(scene_info["depth_paths"])
-
-        (destination_root / self._scene_info_dir_name()).mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_scene_info, destination_root / self._scene_info_dir_name() / source_scene_info.name)
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            image_paths, depth_paths, intrinsics = self._minimum_readable_scene_payload(scene_info, unit.unit_name)
+            self._write_scene_info_npz(
+                destination_root / self._scene_info_dir_name() / source_scene_info.name,
+                image_paths=image_paths,
+                depth_paths=depth_paths,
+                intrinsics=intrinsics,
+            )
+        else:
+            image_paths = self._as_string_list(scene_info["image_paths"])
+            depth_paths = self._as_string_list(scene_info["depth_paths"])
+            (destination_root / self._scene_info_dir_name()).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_scene_info, destination_root / self._scene_info_dir_name() / source_scene_info.name)
         for relative_path in image_paths + depth_paths:
             source_path = source_root / relative_path
             target_path = destination_root / relative_path
@@ -526,8 +534,17 @@ class MegaDepthPipeline(DatasetPipeline):
             )
 
         scene_info = np.load(scene_info_path, allow_pickle=True)
-        image_paths = self._as_string_list(scene_info["image_paths"])
-        depth_paths = self._as_string_list(scene_info["depth_paths"])
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            image_paths, depth_paths, intrinsics = self._minimum_readable_scene_payload(scene_info, unit.unit_name)
+            self._write_scene_info_npz(
+                scene_info_path,
+                image_paths=image_paths,
+                depth_paths=depth_paths,
+                intrinsics=intrinsics,
+            )
+        else:
+            image_paths = self._as_string_list(scene_info["image_paths"])
+            depth_paths = self._as_string_list(scene_info["depth_paths"])
         repo_files = set(self._remote_repo_files())
         missing_paths = [path for path in image_paths + depth_paths if path not in repo_files]
         if missing_paths:
@@ -697,6 +714,35 @@ class MegaDepthPipeline(DatasetPipeline):
     def _as_string_list(self, values: object) -> list[str]:
         array = np.asarray(values)
         return [str(item) for item in array.tolist()]
+
+    def _minimum_readable_scene_payload(
+        self,
+        scene_info: np.lib.npyio.NpzFile,
+        scene_name: str,
+    ) -> tuple[list[str], list[str], np.ndarray]:
+        image_paths = self._as_string_list(scene_info["image_paths"])
+        depth_paths = self._as_string_list(scene_info["depth_paths"])
+        intrinsics_array = np.asarray(scene_info["intrinsics"], dtype=np.float32)
+        count = min(len(image_paths), len(depth_paths), intrinsics_array.shape[0])
+        if count == 0:
+            raise ValueError(f"MegaDepth scene {scene_name} has no readable image/depth/intrinsics entries")
+        return [image_paths[0]], [depth_paths[0]], intrinsics_array[:1]
+
+    def _write_scene_info_npz(
+        self,
+        path: Path,
+        *,
+        image_paths: list[str],
+        depth_paths: list[str],
+        intrinsics: np.ndarray,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            path,
+            image_paths=np.array(image_paths, dtype=object),
+            depth_paths=np.array(depth_paths, dtype=object),
+            intrinsics=np.asarray(intrinsics, dtype=np.float32),
+        )
 
 
     def _suggest_shard_splits(self, shard_names: list[str]) -> tuple[list[str], list[str]]:

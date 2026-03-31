@@ -6,8 +6,13 @@ import numpy as np
 
 from tests import _bootstrap  # noqa: F401
 from depth_collector.core import SampleRecord
-from depth_collector.geometry import PinholeCameraModel, generate_pinhole_rays
-from depth_collector.visualization import _build_sample_row, _render_scalar_map, create_contact_sheet
+from depth_collector.geometry import (
+    EquirectangularCameraModel,
+    PinholeCameraModel,
+    generate_equirectangular_rays,
+    generate_pinhole_rays,
+)
+from depth_collector.visualization import _build_sample_row, _render_same_camera_view, _render_scalar_map, create_contact_sheet
 
 
 class VisualizationTest(unittest.TestCase):
@@ -100,6 +105,25 @@ class VisualizationTest(unittest.TestCase):
 
         self.assertEqual(len(row_tiles), 7)
         self.assertTrue(all(tile.size == (4, 4) for tile in row_tiles))
+
+    def test_equirectangular_reprojection_is_not_black(self) -> None:
+        image = np.zeros((4, 8, 3), dtype=np.float32)
+        image[..., 0] = np.linspace(0.1, 0.9, 8, dtype=np.float32)
+        image[..., 1] = 0.5
+        distance = np.ones((4, 8, 1), dtype=np.float32)
+        ray_dir = generate_equirectangular_rays(EquirectangularCameraModel(width=8, height=4)).astype(np.float32)
+        sample = SampleRecord(
+            sample_id="tof_360/Hospital/000",
+            image=image,
+            distance=distance,
+            ray_dir=ray_dir,
+            provenance={"projection": "equirectangular", "scene_name": "Hospital"},
+        )
+
+        reprojection = np.asarray(_render_same_camera_view(sample), dtype=np.uint8)
+
+        self.assertGreater(int(np.sum(reprojection)), 0)
+        self.assertGreater(int(np.count_nonzero(reprojection)), 0)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,21 @@ This document defines the working standard for adding a new dataset pipeline to 
 
 It exists to keep new integrations aligned with the repository's role as a dataset factory rather than a collection of one-off ingestion scripts.
 
+## Minimum Readable Definition
+
+IMPORTANT:
+
+In this repository, `selection: "minimum_readable"` is defined in terms of the active source packaging, not in terms of an ideal hypothetical packaging.
+
+That means:
+
+- it is the minimum amount of data that must be downloaded from the current source repository
+- so that the pipeline can read and process at least one complete `(image, distance, ray_dir)` sample
+- if the current repository packaging forces a large natural acquisition unit, then that large unit is still the correct `minimum_readable` download
+- agents must not reinterpret `minimum_readable` as "the smallest subset we wish the upstream repo exposed"
+
+This definition applies first to download behavior, then to extraction and processing behavior built on top of that downloaded source subset.
+
 ## Goal
 
 When adding a new pipeline, the goal is:
@@ -37,7 +52,7 @@ Every dataset config must include `selection`, and every new pipeline must corre
 
 Candidate-pool fields such as `scenes`, `trajectories`, `environments`, `bundles`, `frames`, or `sequences` remain dataset-specific, but `selection` is now a repository-wide contract.
 
-`"minimum_readable"` specifically means: select the smallest source subset that still yields at least one readable `(image, distance, ray_dir)` sample.
+`"minimum_readable"` specifically means: select the smallest source subset from the active source repository that still yields at least one readable `(image, distance, ray_dir)` sample.
 
 ## Required Implementation Process
 
@@ -86,6 +101,7 @@ A new pipeline must not:
 - make smoke-test settings the only supported operating mode
 - silently guess geometry semantics without exposing the assumption in config and docs
 - claim `"minimum_readable"` support without proving that the selected subset yields at least one readable `(image, distance, ray_dir)` sample
+- claim a repo is violating the `minimum_readable` rule when the repo's real packaging simply makes the minimum readable download large
 
 ## Unit Model Requirement
 
@@ -143,6 +159,7 @@ Every new pipeline should update:
 The documentation should make these points explicit:
 
 - what the minimum readable sample path is
+- what the minimum readable download from the active source repo actually is
 - what the dataset-native candidate pool is
 - what the default tiny-run selector does
 - how to expand the config to the full dataset

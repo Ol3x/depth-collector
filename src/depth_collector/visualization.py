@@ -223,6 +223,13 @@ def _save_visualization_table(sample_rows: list[list[Image.Image]], sample_ids: 
 
 
 def _render_same_camera_view(sample: SampleRecord) -> Image.Image:
+    projection = str(sample.provenance.get("projection", "")).strip().lower()
+    if projection == "equirectangular":
+        return _render_same_equirectangular_view(sample)
+    return _render_same_pinhole_view(sample)
+
+
+def _render_same_pinhole_view(sample: SampleRecord) -> Image.Image:
     image = np.asarray(sample.image, dtype=np.float32)
     distance = np.asarray(sample.distance[..., 0], dtype=np.float32)
     ray_dir = np.asarray(sample.ray_dir, dtype=np.float32)
@@ -256,6 +263,54 @@ def _render_same_camera_view(sample: SampleRecord) -> Image.Image:
         px = u[idx]
         py = v[idx]
         depth = z_forward[idx]
+        if depth < z_buffer[py, px]:
+            z_buffer[py, px] = depth
+            canvas[py, px] = colors[idx]
+    return _to_uint8_image(canvas)
+
+
+def _render_same_equirectangular_view(sample: SampleRecord) -> Image.Image:
+    image = np.asarray(sample.image, dtype=np.float32)
+    distance = np.asarray(sample.distance[..., 0], dtype=np.float32)
+    ray_dir = np.asarray(sample.ray_dir, dtype=np.float32)
+    height, width = distance.shape
+
+    left = ray_dir[..., 0].reshape(-1)
+    down = ray_dir[..., 1].reshape(-1)
+    forward = ray_dir[..., 2].reshape(-1)
+    radial_distance = distance.reshape(-1)
+    colors = np.clip(image.reshape(-1, 3), 0.0, 1.0)
+
+    horizontal_norm = np.sqrt(np.maximum(left * left + forward * forward, 1e-12))
+    lon = np.arctan2(-left, forward)
+    lat = np.arctan2(-down, horizontal_norm)
+
+    u = np.rint(((lon / (2.0 * np.pi)) + 0.5) * width - 0.5).astype(np.int32)
+    v = np.rint((0.5 - (lat / np.pi)) * height - 0.5).astype(np.int32)
+
+    # Wrap the panorama horizontally and clamp vertically.
+    u = np.mod(u, width)
+    v = np.clip(v, 0, height - 1)
+
+    valid = (
+        np.isfinite(left)
+        & np.isfinite(down)
+        & np.isfinite(forward)
+        & np.isfinite(radial_distance)
+        & (radial_distance > 1e-6)
+    )
+    u = u[valid]
+    v = v[valid]
+    radial_distance = radial_distance[valid]
+    colors = colors[valid]
+
+    canvas = np.zeros((height, width, 3), dtype=np.float32)
+    z_buffer = np.full((height, width), np.inf, dtype=np.float32)
+    order = np.argsort(radial_distance)
+    for idx in order:
+        px = u[idx]
+        py = v[idx]
+        depth = radial_distance[idx]
         if depth < z_buffer[py, px]:
             z_buffer[py, px] = depth
             canvas[py, px] = colors[idx]
