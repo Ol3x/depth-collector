@@ -28,3 +28,15 @@
   - shared logic lives in a `WMGStereoPipeline` family class
   - concrete wrappers exist for `flying`, `nature`, and `indoor`
   - all three variants use the same HF dataset ID but remain separate dataset names inside this project
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means the smallest source subset that still yields one readable `(image, distance, ray_dir)` sample.
+- For WMGStereo, that subset is one left-camera frame plus the matching geometry and calibration files needed to reconstruct depth:
+  - one `frames/Image/camera_0/...` image file
+  - one `frames/disparity/camera_0/...` disparity file
+  - one `frames/camview/camera_0/...` left-camera calibration file
+  - one `frames/camview/camera_1/...` right-camera calibration file
+- The implementation now materializes a tiny local `.tar.gz` containing only those required files, rather than downloading or retaining an entire multi-seed archive.
+- `selection: "all"` means all selected or discovered archives for that category.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered archive pool.

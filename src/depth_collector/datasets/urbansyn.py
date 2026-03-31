@@ -112,13 +112,7 @@ class UrbanSynPipeline(DatasetPipeline):
                 frame_ids = self._discover_frame_ids_from_root(self.paths.raw)
             if not frame_ids:
                 frame_ids = self._discover_frame_ids_from_remote()
-        count = self.dataset_config.options.get("frame_count")
-        if count is None:
-            return frame_ids
-        frame_count = int(count)
-        if frame_count < 1:
-            raise ValueError("frame_count must be at least 1")
-        return frame_ids[: min(frame_count, len(frame_ids))]
+        return [str(frame_id) for frame_id in self.apply_dataset_selection(frame_ids)]
 
     def _use_semantic_masks(self) -> bool:
         return bool(self.dataset_config.options.get("use_semantic_masks", True))
@@ -502,13 +496,7 @@ class UrbanSynPipeline(DatasetPipeline):
         return True
 
     def is_partial_download_build(self) -> bool:
-        configured = self._frames_option()
-        configured_count = self.dataset_config.options.get("frame_count")
-        if configured:
-            if configured_count is None:
-                return False
-            return int(configured_count) < len(configured)
-        return configured_count is not None
+        return self.dataset_selection() != self.ALL_SELECTION
 
     def _suggest_shard_splits(self, shard_names: list[str]) -> tuple[list[str], list[str]]:
         if not shard_names:

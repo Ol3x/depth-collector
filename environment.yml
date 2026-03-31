@@ -1,17 +1,18 @@
 name: depth-collector
 channels:
-  - pytorch
-  - defaults
+  - conda-forge
+  - nodefaults
 dependencies:
   - python=3.12
   - numpy
-  - pytorch
   - pillow
   - pytest
   - huggingface_hub
   - tqdm
   - h5py
-  - matplotlib
+  - matplotlib-base
   - pip
   - pip:
+      - --extra-index-url=https://download.pytorch.org/whl/cu128
+      - torch==2.10.0+cu128
       - OpenEXR

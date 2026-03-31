@@ -35,13 +35,21 @@ Every dataset entry should support at least:
 
 - `enabled`
 - `hf_dataset_id`
+- `selection`
 
 Optional dataset-local fields should be allowed, but they should remain scoped inside that dataset entry.
 
 Dataset-local selection fields should include:
 
-- candidate complete-unit lists such as `environments`, `scenes`, or `bundles`
-- matching complete-unit count keys such as `environment_count`, `scene_count`, or `bundle_count`
+- candidate-pool fields such as `environments`, `scenes`, `bundles`, `trajectories`, `frames`, or `sequences`
+
+The shared `selection` field is mandatory and must support exactly:
+
+- `"minimum_readable"`
+- `"all"`
+- a float in `(0, 1]`
+
+`"minimum_readable"` means the pipeline must choose the smallest source subset that still yields at least one readable `(image, distance, ray_dir)` sample.
 
 ## Shared Runtime Expectations
 
@@ -74,6 +82,7 @@ The config layer should eventually validate at least:
 - `process_ratio` is in a valid range
 - `train_val_split` is in a valid range
 - `max_dist` is strictly positive
+- every dataset entry has a valid `selection`
 
 The shared sample validator should enforce at least:
 

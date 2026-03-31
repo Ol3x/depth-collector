@@ -17,7 +17,7 @@ class UrbanSynPipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        frame_count: int = 1,
+        selection: object = "minimum_readable",
         process_ratio: float = 1.0,
     ) -> dict[str, object]:
         return {
@@ -47,8 +47,8 @@ class UrbanSynPipelineTest(unittest.TestCase):
                 "urbansyn": {
                     "enabled": True,
                     "hf_dataset_id": "UrbanSyn/UrbanSyn",
+                    "selection": selection,
                     "frames": "*",
-                    "frame_count": frame_count,
                     "use_semantic_masks": True,
                     "sky_class_id": 10,
                     "depth_semantics": "z_depth",

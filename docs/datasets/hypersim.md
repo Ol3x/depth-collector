@@ -19,3 +19,17 @@
   - it assumes per-scene archives preserve `_detail/metadata_scene.csv`, camera keyframe positions/orientations, and per-frame HDF5 geometry files
   - the current conversion path derives canonical rays from world positions plus camera pose and scene scale, rather than trusting image-plane intrinsics alone
   - Hypersim camera convention is treated as right, up, backward and converted into the repo convention left, down, forward
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means the smallest source subset that still yields one readable `(image, distance, ray_dir)` sample.
+- For Hypersim, that subset is one frame plus the minimum metadata needed to reconstruct geometry:
+  - one RGB preview image
+  - one paired `depth_meters` file
+  - one paired `depth_meters_plane` file
+  - sliced camera keyframe orientation and position metadata for the chosen frame
+  - scene-level metadata needed for scale and ray reconstruction
+- In directory mode the implementation uses a cached manifest and direct file downloads for only those files.
+- In archive mode the implementation materializes a tiny scene zip containing only those files and the sliced metadata.
+- `selection: "all"` means all selected or discovered scenes.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered scene pool.

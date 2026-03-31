@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import io
 import json
 import math
 from pathlib import Path
@@ -33,6 +34,7 @@ class VirtualKITTI2SourceItem:
     sequence_name: str
     frame_id: str
     frame_index: int
+    array_index: int
     image_relative_path: str
     depth_relative_path: str
 
@@ -47,6 +49,7 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
         self._written_shards: list[dict[str, object]] = []
         self._remote_repo_files_cache: tuple[str, ...] | None = None
         self._camera_arrays_cache: dict[str, dict[str, np.ndarray]] = {}
+        self._frame_index_map_cache: dict[str, dict[str, int]] = {}
         self._scene_info_cache: dict[str, dict[str, object]] = {}
 
     def _remote_repo_files(self) -> tuple[str, ...]:
@@ -124,25 +127,29 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
                 sequence_names = []
             if not sequence_names:
                 sequence_names = self._discover_sequence_names_from_root(self._raw_dataset_root())
-        count = self.dataset_config.options.get("sequence_count")
-        if count is None:
-            return sequence_names
-        sequence_count = int(count)
-        if sequence_count < 1:
-            raise ValueError("sequence_count must be at least 1")
-        return sequence_names[: min(sequence_count, len(sequence_names))]
+        return [str(sequence_name) for sequence_name in self.apply_dataset_selection(sequence_names)]
 
     def enumerate_download_units(self) -> Iterable[VirtualKITTI2ArchiveUnit]:
         yield VirtualKITTI2ArchiveUnit(archive_name=self._archive_filename())
 
     def download_unit(self, unit: VirtualKITTI2ArchiveUnit) -> None:
         local_archive_root = self.dataset_config.options.get("local_archive_root")
+        archive_path = self._archive_path()
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            if local_archive_root:
+                source_path = Path(str(local_archive_root)) / unit.archive_name
+                if not source_path.exists():
+                    raise FileNotFoundError(f"missing local VKITTI2 archive source: {source_path}")
+                self._write_minimum_readable_archive_from_local_source(source_path, archive_path)
+                return
+            self._write_minimum_readable_archive_from_remote_source(unit.archive_name, archive_path)
+            return
         if local_archive_root:
             source_path = Path(str(local_archive_root)) / unit.archive_name
             if not source_path.exists():
                 raise FileNotFoundError(f"missing local VKITTI2 archive source: {source_path}")
-            self._archive_path().parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_path, self._archive_path())
+            shutil.copy2(source_path, archive_path)
             return
 
         downloaded_path = self.hf_hub_download(
@@ -153,9 +160,141 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
             local_dir=self.paths.raw,
         )
         downloaded_path = Path(downloaded_path)
-        archive_path = self._archive_path()
         if downloaded_path.resolve() != archive_path.resolve():
             shutil.copy2(downloaded_path, archive_path)
+
+    def _write_minimum_readable_archive_from_local_source(self, source_path: Path, target_path: Path) -> None:
+        with source_path.open("rb") as handle:
+            with tarfile.open(fileobj=handle, mode="r|*") as archive:
+                self._write_minimum_readable_archive_from_stream(archive, target_path)
+
+    def _write_minimum_readable_archive_from_remote_source(self, archive_name: str, target_path: Path) -> None:
+        with self.hf_open_remote_file(
+            repo_id=self.dataset_config.hf_dataset_id,
+            filename=archive_name,
+            repo_type="dataset",
+            revision=self.dataset_config.revision,
+        ) as handle:
+            with tarfile.open(fileobj=handle, mode="r|*") as archive:
+                self._write_minimum_readable_archive_from_stream(archive, target_path)
+
+    def _write_minimum_readable_archive_from_stream(self, archive: tarfile.TarFile, target_path: Path) -> None:
+        sequence_payloads: dict[str, dict[str, object]] = {}
+        for member in archive:
+            if not member.isfile():
+                continue
+            descriptor = self._classify_archive_member(member.name)
+            if descriptor is None:
+                continue
+            sequence_name, kind, key = descriptor
+            member_file = archive.extractfile(member)
+            if member_file is None:
+                continue
+            payload = sequence_payloads.setdefault(
+                sequence_name,
+                {
+                    "images": {},
+                    "depths": {},
+                    "intrinsics": None,
+                    "extrinsics": None,
+                    "scene_info": None,
+                    "prefix": self._hf_path_prefix(),
+                },
+            )
+            if kind == "image":
+                payload["images"][key] = (member.name, member_file.read())
+            elif kind == "depth":
+                payload["depths"][key] = (member.name, member_file.read())
+            else:
+                payload[kind] = (member.name, member_file.read())
+            subset_written = self._maybe_write_minimum_readable_archive(sequence_name, payload, target_path)
+            if subset_written:
+                return
+        raise ValueError(
+            f"{self.dataset_name} could not find a readable sample inside {target_path.name}: "
+            "no archive member set contained one RGB, one depth, intrinsics, extrinsics, and scene info"
+        )
+
+    def _classify_archive_member(self, member_name: str) -> tuple[str, str, str | None] | None:
+        path = Path(member_name)
+        parts = path.parts
+        prefix = self._hf_path_prefix()
+        if prefix:
+            if len(parts) < 3 or parts[0] != prefix:
+                return None
+            parts = parts[1:]
+        if len(parts) < 2:
+            return None
+        sequence_name = parts[0]
+        if len(parts) >= 3 and parts[1] == "rgbs" and path.name.startswith("rgb_") and path.suffix.lower() == ".jpg":
+            return sequence_name, "image", path.stem.removeprefix("rgb_")
+        if len(parts) >= 3 and parts[1] == "depths" and path.name.startswith("depth_") and path.suffix.lower() == ".npz":
+            return sequence_name, "depth", path.stem.removeprefix("depth_")
+        if len(parts) == 2 and path.name == "intrinsics.npy":
+            return sequence_name, "intrinsics", None
+        if len(parts) == 2 and path.name == "extrinsics.npy":
+            return sequence_name, "extrinsics", None
+        if len(parts) == 2 and path.name == "scene_info.json":
+            return sequence_name, "scene_info", None
+        return None
+
+    def _maybe_write_minimum_readable_archive(
+        self,
+        sequence_name: str,
+        payload: dict[str, object],
+        target_path: Path,
+    ) -> bool:
+        images = payload["images"]
+        depths = payload["depths"]
+        intrinsics_payload = payload["intrinsics"]
+        extrinsics_payload = payload["extrinsics"]
+        scene_info_payload = payload["scene_info"]
+        assert isinstance(images, dict)
+        assert isinstance(depths, dict)
+        if intrinsics_payload is None or extrinsics_payload is None or scene_info_payload is None:
+            return False
+        frame_ids = sorted(set(images) & set(depths))
+        if not frame_ids:
+            return False
+        frame_id = frame_ids[0]
+        frame_index = int(frame_id)
+        intrinsics_name, intrinsics_bytes = intrinsics_payload
+        extrinsics_name, extrinsics_bytes = extrinsics_payload
+        scene_info_name, scene_info_bytes = scene_info_payload
+        intrinsics = np.asarray(np.load(io.BytesIO(intrinsics_bytes)), dtype=np.float32)
+        extrinsics = np.asarray(np.load(io.BytesIO(extrinsics_bytes)), dtype=np.float32)
+        if frame_index >= intrinsics.shape[0] or frame_index >= extrinsics.shape[0]:
+            return False
+        subset_intrinsics = intrinsics[frame_index : frame_index + 1]
+        subset_extrinsics = extrinsics[frame_index : frame_index + 1]
+        image_name, image_bytes = images[frame_id]
+        depth_name, depth_bytes = depths[frame_id]
+        prefix = str(payload["prefix"]).strip().strip("/")
+        frame_index_map = {frame_id: 0}
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(target_path, "w:gz") as output_archive:
+            self._write_archive_bytes(output_archive, image_name, image_bytes)
+            self._write_archive_bytes(output_archive, depth_name, depth_bytes)
+            self._write_archive_bytes(output_archive, intrinsics_name, self._numpy_payload(subset_intrinsics))
+            self._write_archive_bytes(output_archive, extrinsics_name, self._numpy_payload(subset_extrinsics))
+            self._write_archive_bytes(output_archive, scene_info_name, scene_info_bytes)
+            frame_index_map_path = "/".join(part for part in (prefix, sequence_name, "frame_index_map.json") if part)
+            self._write_archive_bytes(
+                output_archive,
+                frame_index_map_path,
+                json.dumps(frame_index_map, sort_keys=True).encode("utf-8"),
+            )
+        return True
+
+    def _numpy_payload(self, array: np.ndarray) -> bytes:
+        buffer = io.BytesIO()
+        np.save(buffer, array)
+        return buffer.getvalue()
+
+    def _write_archive_bytes(self, archive: tarfile.TarFile, member_name: str, payload: bytes) -> None:
+        info = tarfile.TarInfo(name=member_name)
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
 
     def enumerate_extraction_units(self) -> Iterable[VirtualKITTI2ArchiveUnit]:
         return self.enumerate_download_units()
@@ -193,6 +332,7 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
                 continue
 
             camera_arrays = self._load_camera_arrays(sequence_name)
+            frame_index_map = self._load_frame_index_map(sequence_name)
             intrinsics = camera_arrays.get("intrinsics")
             extrinsics = camera_arrays.get("extrinsics")
             if intrinsics is None or intrinsics.ndim != 3 or intrinsics.shape[1:] != (3, 3):
@@ -220,17 +360,19 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
                     )
                     continue
                 frame_index = int(frame_id)
-                if frame_index >= intrinsics.shape[0] or frame_index >= extrinsics.shape[0]:
+                array_index = frame_index_map.get(frame_id, frame_index)
+                if array_index >= intrinsics.shape[0] or array_index >= extrinsics.shape[0]:
                     self.record_error(
                         "enumeration",
                         f"{sequence_name}/{frame_id}",
-                        f"frame index {frame_index} exceeds VKITTI2 annotations length",
+                        f"frame index {array_index} exceeds VKITTI2 annotations length",
                     )
                     continue
                 yield VirtualKITTI2SourceItem(
                     sequence_name=sequence_name,
                     frame_id=frame_id,
                     frame_index=frame_index,
+                    array_index=array_index,
                     image_relative_path=str(image_path.relative_to(self._raw_dataset_root())),
                     depth_relative_path=str(depth_path.relative_to(self._raw_dataset_root())),
                 )
@@ -255,6 +397,19 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
         self._camera_arrays_cache[sequence_name] = payload
         return payload
 
+    def _load_frame_index_map(self, sequence_name: str) -> dict[str, int]:
+        cached = self._frame_index_map_cache.get(sequence_name)
+        if cached is not None:
+            return cached
+        path = self._sequence_root(sequence_name) / "frame_index_map.json"
+        if not path.exists():
+            payload: dict[str, int] = {}
+        else:
+            raw_payload = json.loads(path.read_text())
+            payload = {str(frame_id): int(index) for frame_id, index in raw_payload.items()}
+        self._frame_index_map_cache[sequence_name] = payload
+        return payload
+
     def _load_scene_info(self, sequence_name: str) -> dict[str, object]:
         cached = self._scene_info_cache.get(sequence_name)
         if cached is not None:
@@ -274,8 +429,8 @@ class VirtualKITTI2Pipeline(DatasetPipeline):
         return {
             "image": image,
             "depth": depth,
-            "intrinsics": np.asarray(camera_arrays["intrinsics"][item.frame_index], dtype=np.float32),
-            "extrinsics": np.asarray(camera_arrays["extrinsics"][item.frame_index], dtype=np.float32),
+            "intrinsics": np.asarray(camera_arrays["intrinsics"][item.array_index], dtype=np.float32),
+            "extrinsics": np.asarray(camera_arrays["extrinsics"][item.array_index], dtype=np.float32),
             "scene_info": scene_info,
         }
 

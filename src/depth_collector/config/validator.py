@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from numbers import Real
+
 from depth_collector.config.models import RootConfig
 
 
@@ -28,3 +30,23 @@ def validate_config(config: RootConfig) -> None:
             raise ValueError("dataset names must be non-empty")
         if not dataset_config.hf_dataset_id:
             raise ValueError(f"datasets.{dataset_name}.hf_dataset_id must be non-empty")
+        if "selection" not in dataset_config.options:
+            raise ValueError(
+                f"datasets.{dataset_name}.selection is required and must be "
+                "'minimum_readable', 'all', or a float in (0, 1]"
+            )
+        selection = dataset_config.options["selection"]
+        if isinstance(selection, str):
+            if selection.strip().lower() not in {"minimum_readable", "all"}:
+                raise ValueError(
+                    f"datasets.{dataset_name}.selection must be "
+                    "'minimum_readable', 'all', or a float in (0, 1]"
+                )
+            continue
+        if isinstance(selection, Real) and not isinstance(selection, bool):
+            if 0.0 < float(selection) <= 1.0:
+                continue
+        raise ValueError(
+            f"datasets.{dataset_name}.selection must be "
+            "'minimum_readable', 'all', or a float in (0, 1]"
+        )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import io
 import math
 from pathlib import Path
 import shutil
@@ -52,7 +53,7 @@ class DIODEPipeline(DatasetPipeline):
     def _archive_filename(self) -> str:
         return str(self.dataset_config.options.get("archive_filename", "train_subset.tar.gz"))
 
-    def _selected_scene_types(self) -> list[str]:
+    def _configured_scene_types(self) -> list[str]:
         configured = self.dataset_config.options.get("scene_types", "*")
         if isinstance(configured, str):
             if configured.strip().lower() in self.ALL_SELECTOR_VALUES:
@@ -95,6 +96,15 @@ class DIODEPipeline(DatasetPipeline):
         local_archive_root = self.dataset_config.options.get("local_archive_root")
         archive_path = self._archive_path()
         archive_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            if local_archive_root:
+                source_path = Path(str(local_archive_root)) / unit.archive_name
+                if not source_path.exists():
+                    raise FileNotFoundError(f"missing local DIODE archive source: {source_path}")
+                self._write_minimum_readable_archive_from_local_source(source_path, archive_path)
+                return
+            self._write_minimum_readable_archive_from_remote_source(unit.archive_name, archive_path)
+            return
         if local_archive_root:
             source_path = Path(str(local_archive_root)) / unit.archive_name
             if not source_path.exists():
@@ -113,6 +123,63 @@ class DIODEPipeline(DatasetPipeline):
         if downloaded_path.resolve() != archive_path.resolve():
             shutil.copy2(downloaded_path, archive_path)
 
+    def _write_minimum_readable_archive_from_local_source(self, source_path: Path, target_path: Path) -> None:
+        with source_path.open("rb") as handle:
+            with tarfile.open(fileobj=handle, mode="r|*") as archive:
+                self._write_minimum_readable_archive_from_stream(archive, target_path)
+
+    def _write_minimum_readable_archive_from_remote_source(self, archive_name: str, target_path: Path) -> None:
+        with self.hf_open_remote_file(
+            repo_id=self.dataset_config.hf_dataset_id,
+            filename=archive_name,
+            repo_type="dataset",
+            revision=self.dataset_config.revision,
+        ) as handle:
+            with tarfile.open(fileobj=handle, mode="r|*") as archive:
+                self._write_minimum_readable_archive_from_stream(archive, target_path)
+
+    def _write_minimum_readable_archive_from_stream(self, archive: tarfile.TarFile, target_path: Path) -> None:
+        sample_members: dict[str, dict[str, tuple[str, bytes]]] = {}
+        for member in archive:
+            if not member.isfile():
+                continue
+            descriptor = self._classify_archive_member(member.name)
+            if descriptor is None:
+                continue
+            sample_key, kind = descriptor
+            member_file = archive.extractfile(member)
+            if member_file is None:
+                continue
+            frame_members = sample_members.setdefault(sample_key, {})
+            if kind in frame_members:
+                continue
+            frame_members[kind] = (member.name, member_file.read())
+            if all(required_kind in frame_members for required_kind in ("image", "depth", "mask")):
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with tarfile.open(target_path, "w:gz") as output_archive:
+                    for required_kind in ("image", "depth", "mask"):
+                        member_name, payload = frame_members[required_kind]
+                        info = tarfile.TarInfo(name=member_name)
+                        info.size = len(payload)
+                        output_archive.addfile(info, io.BytesIO(payload))
+                return
+        raise ValueError(
+            f"{self.dataset_name} could not find a readable sample inside {target_path.name}: "
+            "no archive member set contained image, depth, and depth-mask files"
+        )
+
+    def _classify_archive_member(self, member_name: str) -> tuple[str, str] | None:
+        path = Path(member_name)
+        if path.suffix.lower() == ".png" and not path.name.endswith(("_depth.png", "_depth_mask.png", "_normal.png")):
+            return str(path.with_suffix("")), "image"
+        if path.suffix.lower() == ".npy" and path.name.endswith("_depth.npy"):
+            stem = path.name.removesuffix("_depth.npy")
+            return str(path.with_name(stem).with_suffix("")), "depth"
+        if path.suffix.lower() == ".npy" and path.name.endswith("_depth_mask.npy"):
+            stem = path.name.removesuffix("_depth_mask.npy")
+            return str(path.with_name(stem).with_suffix("")), "mask"
+        return None
+
     def enumerate_extraction_units(self) -> Iterable[DIODEArchiveUnit]:
         return self.enumerate_download_units()
 
@@ -126,13 +193,29 @@ class DIODEPipeline(DatasetPipeline):
 
     def enumerate_source_items(self) -> Iterable[DIODESourceItem]:
         split_names = set(self._selected_split_names())
-        selected_scene_types = set(self._selected_scene_types())
         extracted_root = self._extracted_root()
         if not extracted_root.exists():
             self.record_error("enumeration", self.dataset_name, f"missing extracted DIODE root: {extracted_root}")
             return
         default_split_name = next(iter(split_names)) if split_names else "train"
-        for image_path in sorted(extracted_root.rglob("*.png")):
+        image_paths = sorted(extracted_root.rglob("*.png"))
+        configured_scene_types = self._configured_scene_types()
+        if configured_scene_types:
+            selected_scene_types = set(str(scene_type) for scene_type in self.apply_dataset_selection(configured_scene_types))
+        else:
+            discovered_scene_types: list[str] = []
+            for image_path in image_paths:
+                if image_path.name.endswith(("_depth.png", "_depth_mask.png", "_normal.png")):
+                    continue
+                relative_path = image_path.relative_to(extracted_root)
+                parts = relative_path.parts
+                if len(parts) < 3:
+                    continue
+                scene_type = parts[1] if parts[0] in split_names and len(parts) >= 4 else parts[0]
+                if scene_type not in discovered_scene_types:
+                    discovered_scene_types.append(scene_type)
+            selected_scene_types = set(str(scene_type) for scene_type in self.apply_dataset_selection(discovered_scene_types))
+        for image_path in image_paths:
             if image_path.name.endswith(("_depth.png", "_depth_mask.png", "_normal.png")):
                 continue
             relative_path = image_path.relative_to(extracted_root)

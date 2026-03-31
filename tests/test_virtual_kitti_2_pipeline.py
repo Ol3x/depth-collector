@@ -1,4 +1,5 @@
 import json
+import io
 import tarfile
 import tempfile
 import unittest
@@ -18,7 +19,7 @@ class VirtualKITTI2PipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        sequence_count: int = 1,
+        selection: object = "minimum_readable",
         process_ratio: float = 1.0,
     ) -> dict[str, object]:
         return {
@@ -48,17 +49,17 @@ class VirtualKITTI2PipelineTest(unittest.TestCase):
                 "virtual_kitti_2": {
                     "enabled": True,
                     "hf_dataset_id": "ZhengGuangze/VKITTI2_vlbm",
+                    "selection": selection,
                     "archive_filename": "vkitti2_vlbm.tar.gz",
                     "sequences": "*",
-                    "sequence_count": sequence_count,
                     "depth_semantics": "distance",
                 }
             },
         }
 
-    def _make_pipeline(self, tmp_dir: str) -> VirtualKITTI2Pipeline:
+    def _make_pipeline(self, tmp_dir: str, *, selection: object = "minimum_readable") -> VirtualKITTI2Pipeline:
         config_path = Path(tmp_dir) / "config.json"
-        config_path.write_text(json.dumps(self._make_config(tmp_dir)))
+        config_path.write_text(json.dumps(self._make_config(tmp_dir, selection=selection)))
         return VirtualKITTI2Pipeline(load_config(config_path), "virtual_kitti_2")
 
     def _write_sequence_tree(
@@ -100,9 +101,9 @@ class VirtualKITTI2PipelineTest(unittest.TestCase):
             units = list(pipeline.enumerate_download_units())
             self.assertEqual(units, [VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")])
 
-    def test_remote_download_requests_archive_file(self) -> None:
+    def test_remote_download_requests_archive_file_for_all_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            pipeline = self._make_pipeline(tmp_dir)
+            pipeline = self._make_pipeline(tmp_dir, selection="all")
             unit = VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")
             downloaded_archive = pipeline.paths.raw / "cache" / "vkitti2_vlbm.tar.gz"
             downloaded_archive.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +113,74 @@ class VirtualKITTI2PipelineTest(unittest.TestCase):
                 pipeline.download_unit(unit)
             download_mock.assert_called_once()
             self.assertEqual(download_mock.call_args.kwargs["filename"], "vkitti2_vlbm.tar.gz")
+
+    def test_minimum_readable_download_materializes_single_sample_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            extracted_root = Path(source_dir) / "extracted"
+            self._write_sequence_tree(extracted_root, frame_id="00000")
+            sequence_root = extracted_root / "vkitti2_vlbm" / "Scene06_fog"
+            image = np.zeros((6, 8, 3), dtype=np.uint8)
+            image[..., 0] = 255
+            Image.fromarray(image).save(sequence_root / "rgbs" / "rgb_00001.jpg")
+            depth = np.full((6, 8), 13.0, dtype=np.float32)
+            np.savez(sequence_root / "depths" / "depth_00001.npz", depth=depth)
+            intrinsics = np.zeros((2, 3, 3), dtype=np.float32)
+            intrinsics[0, 0, 0] = 100.0
+            intrinsics[0, 1, 1] = 110.0
+            intrinsics[0, 0, 2] = 4.0
+            intrinsics[0, 1, 2] = 3.0
+            intrinsics[0, 2, 2] = 1.0
+            intrinsics[1] = intrinsics[0]
+            extrinsics = np.eye(4, dtype=np.float32)[None, ...].repeat(2, axis=0)
+            np.save(sequence_root / "intrinsics.npy", intrinsics)
+            np.save(sequence_root / "extrinsics.npy", extrinsics)
+
+            archive_path = Path(source_dir) / "vkitti2_vlbm.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                archive.add(extracted_root / "vkitti2_vlbm", arcname="vkitti2_vlbm")
+
+            pipeline.dataset_config.options["local_archive_root"] = source_dir
+            unit = VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")
+            pipeline.download_unit(unit)
+
+            with tarfile.open(pipeline._archive_path(), "r:gz") as archive:
+                member_names = sorted(member.name for member in archive if member.isfile())
+            self.assertEqual(
+                member_names,
+                [
+                    "vkitti2_vlbm/Scene06_fog/depths/depth_00000.npz",
+                    "vkitti2_vlbm/Scene06_fog/extrinsics.npy",
+                    "vkitti2_vlbm/Scene06_fog/frame_index_map.json",
+                    "vkitti2_vlbm/Scene06_fog/intrinsics.npy",
+                    "vkitti2_vlbm/Scene06_fog/rgbs/rgb_00000.jpg",
+                    "vkitti2_vlbm/Scene06_fog/scene_info.json",
+                ],
+            )
+
+    def test_minimum_readable_remote_download_uses_streaming_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            extracted_root = Path(source_dir) / "extracted"
+            self._write_sequence_tree(extracted_root)
+            archive_path = Path(source_dir) / "vkitti2_vlbm.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                archive.add(extracted_root / "vkitti2_vlbm", arcname="vkitti2_vlbm")
+            archive_bytes = archive_path.read_bytes()
+
+            class _RemoteBytes(io.BytesIO):
+                def __enter__(self) -> "_RemoteBytes":
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> None:
+                    self.close()
+
+            unit = VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")
+            with patch.object(pipeline, "hf_open_remote_file", return_value=_RemoteBytes(archive_bytes)) as mocked_open:
+                pipeline.download_unit(unit)
+
+            mocked_open.assert_called_once()
+            self.assertTrue(pipeline._archive_path().exists())
 
     def test_extract_archive_materializes_dataset_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
@@ -153,6 +222,7 @@ class VirtualKITTI2PipelineTest(unittest.TestCase):
                         sequence_name="Scene06_fog",
                         frame_id="00000",
                         frame_index=0,
+                        array_index=0,
                         image_relative_path="Scene06_fog/rgbs/rgb_00000.jpg",
                         depth_relative_path="Scene06_fog/depths/depth_00000.npz",
                     )

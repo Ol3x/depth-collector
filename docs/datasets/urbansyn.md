@@ -24,6 +24,17 @@
   - `ss/ss_<frame_id>.png`
 - Acquisition is HF-backed and downloads those files directly without an archive extraction stage.
 
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means one aligned frame triplet.
+- In the current pipeline, that means one frame ID with:
+  - `rgb/rgb_<frame_id>.png`
+  - `depth/depth_<frame_id>.exr`
+  - enough camera intrinsics to derive canonical `ray_dir`
+- Semantic masks remain optional and do not define readability by themselves.
+- `selection: "all"` means all selected or discovered frame IDs.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered frame-id pool.
+
 ## Current Assumptions
 
 - EXR decoding currently requires the Python `OpenEXR` package.

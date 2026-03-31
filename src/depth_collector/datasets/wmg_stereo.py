@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import io
 from pathlib import Path
 import shutil
 import tarfile
@@ -113,15 +114,6 @@ class WMGStereoPipeline(DatasetPipeline, ABC):
             if str(archive_name).strip().lower() not in self.ALL_SELECTOR_VALUES
         ]
 
-    def _selected_archive_count(self, discovered_count: int) -> int:
-        configured = self.dataset_config.options.get("archive_count")
-        if configured is None:
-            return discovered_count
-        count = int(configured)
-        if count < 1:
-            raise ValueError("archive_count must be at least 1")
-        return min(count, discovered_count)
-
     def _selected_archive_units(self) -> list[WMGStereoArchiveUnit]:
         downloaded_archives = sorted(self._archive_root().glob("*.tar.gz"))
         if downloaded_archives:
@@ -131,7 +123,7 @@ class WMGStereoPipeline(DatasetPipeline, ABC):
                 selected_names = [name for name in configured_names if name in archive_by_name]
             else:
                 selected_names = sorted(archive_by_name)
-            selected_names = selected_names[: self._selected_archive_count(len(selected_names))]
+            selected_names = [str(name) for name in self.apply_dataset_selection(selected_names)]
             return [
                 WMGStereoArchiveUnit(
                     category=self._category_name(),
@@ -150,7 +142,7 @@ class WMGStereoPipeline(DatasetPipeline, ABC):
                 selected_names = [name for name in configured_names if name in archive_by_name]
             else:
                 selected_names = sorted(archive_by_name)
-            selected_names = selected_names[: self._selected_archive_count(len(selected_names))]
+            selected_names = [str(name) for name in self.apply_dataset_selection(selected_names)]
             return [
                 WMGStereoArchiveUnit(
                     category=self._category_name(),
@@ -167,7 +159,7 @@ class WMGStereoPipeline(DatasetPipeline, ABC):
             selected_names = [name for name in configured_names if name in archive_by_name]
         else:
             selected_names = sorted(archive_by_name)
-        selected_names = selected_names[: self._selected_archive_count(len(selected_names))]
+        selected_names = [str(name) for name in self.apply_dataset_selection(selected_names)]
         return [
             WMGStereoArchiveUnit(
                 category=self._category_name(),
@@ -181,15 +173,7 @@ class WMGStereoPipeline(DatasetPipeline, ABC):
         return self._selected_archive_units()
 
     def is_partial_download_build(self) -> bool:
-        configured_names = self._configured_archive_names()
-        configured_count = self.dataset_config.options.get("archive_count")
-        if configured_names:
-            if configured_count is None:
-                return False
-            return int(configured_count) < len(configured_names)
-        if configured_count is not None:
-            return True
-        return False
+        return self.dataset_selection() != self.ALL_SELECTION
 
     def _archive_path(self, unit: WMGStereoArchiveUnit) -> Path:
         return self._archive_root() / unit.archive_name
@@ -210,17 +194,114 @@ class WMGStereoPipeline(DatasetPipeline, ABC):
         shutil.copy2(cached_path, target_path)
         return target_path
 
+    def _resolve_local_source_archive_path(self, unit: WMGStereoArchiveUnit) -> Path:
+        local_archive_root = Path(str(self.dataset_config.options["local_archive_root"]))
+        candidate_paths = [
+            Path(unit.repo_path),
+            local_archive_root / self._release_name() / unit.category / unit.archive_name,
+            local_archive_root / unit.category / unit.archive_name,
+            local_archive_root / unit.archive_name,
+        ]
+        for candidate in candidate_paths:
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError(f"missing local WMGStereo archive source for {unit.archive_name}")
+
     def download_unit(self, unit: WMGStereoArchiveUnit) -> None:
         archive_path = self._archive_path(unit)
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            if local_archive_root:
+                source_path = self._resolve_local_source_archive_path(unit)
+                self._write_minimum_readable_archive_from_local_source(source_path, archive_path)
+                return
+            self._write_minimum_readable_archive_from_remote_source(unit.repo_path, archive_path)
+            return
         if local_archive_root:
-            source_path = Path(unit.repo_path)
-            if not source_path.exists():
-                raise FileNotFoundError(f"missing local WMGStereo archive source: {source_path}")
+            source_path = self._resolve_local_source_archive_path(unit)
             shutil.copy2(source_path, archive_path)
             return
         self._download_hf_file(unit.repo_path, archive_path)
+
+    def _write_minimum_readable_archive_from_local_source(self, source_path: Path, target_path: Path) -> None:
+        with source_path.open("rb") as handle:
+            with tarfile.open(fileobj=handle, mode="r|*") as archive:
+                self._write_minimum_readable_archive_from_stream(archive, target_path)
+
+    def _write_minimum_readable_archive_from_remote_source(self, repo_path: str, target_path: Path) -> None:
+        with self.hf_open_remote_file(
+            repo_id=self.dataset_config.hf_dataset_id,
+            filename=repo_path,
+            repo_type="dataset",
+        ) as handle:
+            with tarfile.open(fileobj=handle, mode="r|*") as archive:
+                self._write_minimum_readable_archive_from_stream(archive, target_path)
+
+    def _write_minimum_readable_archive_from_stream(
+        self,
+        archive: tarfile.TarFile,
+        target_path: Path,
+    ) -> None:
+        required_labels = ("image", "disparity", "left_camview", "right_camview")
+        captured_members: dict[tuple[str, str], dict[str, tuple[tarfile.TarInfo, bytes]]] = {}
+        for member in archive:
+            if not member.isfile():
+                continue
+            descriptor = self._classify_required_member(member.name)
+            if descriptor is None:
+                continue
+            seed_name, frame_key, label = descriptor
+            member_file = archive.extractfile(member)
+            if member_file is None:
+                continue
+            frame_members = captured_members.setdefault((seed_name, frame_key), {})
+            if label in frame_members:
+                continue
+            frame_members[label] = (member, member_file.read())
+            if all(required_label in frame_members for required_label in required_labels):
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with tarfile.open(target_path, "w:gz") as output_archive:
+                    for required_label in required_labels:
+                        source_info, member_bytes = frame_members[required_label]
+                        output_archive.addfile(self._clone_tar_info(source_info, len(member_bytes)), io.BytesIO(member_bytes))
+                return
+        raise ValueError(
+            f"{self.dataset_name} could not find a readable sample inside {target_path.name}: "
+            "no archive member set contained image, disparity, left camview, and right camview files"
+        )
+
+    def _clone_tar_info(self, source_info: tarfile.TarInfo, size: int) -> tarfile.TarInfo:
+        cloned = tarfile.TarInfo(name=source_info.name)
+        cloned.size = size
+        cloned.mtime = source_info.mtime
+        cloned.mode = source_info.mode
+        cloned.type = tarfile.REGTYPE
+        cloned.uid = source_info.uid
+        cloned.gid = source_info.gid
+        cloned.uname = source_info.uname
+        cloned.gname = source_info.gname
+        return cloned
+
+    def _classify_required_member(self, member_name: str) -> tuple[str, str, str] | None:
+        path = Path(member_name)
+        parts = path.parts
+        if len(parts) < 5 or parts[1] != "frames":
+            return None
+        seed_name = parts[0]
+        section = parts[2]
+        camera_name = parts[3]
+        if section == "Image" and camera_name == "camera_0":
+            label = "image"
+        elif section == "disparity" and camera_name == "camera_0":
+            label = "disparity"
+        elif section == "camview" and camera_name == "camera_0":
+            label = "left_camview"
+        elif section == "camview" and camera_name == "camera_1":
+            label = "right_camview"
+        else:
+            return None
+        return seed_name, self._frame_key_from_path(path), label
 
     def enumerate_extraction_units(self) -> Iterable[WMGStereoArchiveUnit]:
         return self._selected_archive_units()

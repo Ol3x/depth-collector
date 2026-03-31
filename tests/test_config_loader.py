@@ -36,6 +36,7 @@ class ConfigLoaderTest(unittest.TestCase):
                 "nyu_depth_v2": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                    "selection": "minimum_readable",
                 }
             },
         }
@@ -78,6 +79,7 @@ class ConfigLoaderTest(unittest.TestCase):
                 "nyu_depth_v2": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                    "selection": "minimum_readable",
                 }
             },
         }
@@ -115,6 +117,7 @@ class ConfigLoaderTest(unittest.TestCase):
                 "nyu_depth_v2": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                    "selection": "minimum_readable",
                 }
             },
         }
@@ -152,6 +155,7 @@ class ConfigLoaderTest(unittest.TestCase):
                 "nyu_depth_v2": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                    "selection": "minimum_readable",
                 }
             },
         }
@@ -188,6 +192,7 @@ class ConfigLoaderTest(unittest.TestCase):
                 "nyu_depth_v2": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                    "selection": "minimum_readable",
                 }
             },
         }
@@ -234,6 +239,7 @@ class ConfigLoaderTest(unittest.TestCase):
                 "nyu_depth_v2": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                    "selection": "minimum_readable",
                 }
             },
         }
@@ -242,6 +248,57 @@ class ConfigLoaderTest(unittest.TestCase):
             path.write_text(json.dumps(payload))
             with self.assertRaises(ValueError):
                 load_config(path)
+
+    def test_selection_is_required_and_validated(self) -> None:
+        payload = {
+            "project": {
+                "name": "default",
+                "description": "test",
+                "max_dist": 100.0,
+                "train_val_split": 0.95,
+            },
+            "runtime": {
+                "download_workers": 2,
+                "process_ratio": 0.25,
+                "shuffle_seed": 0,
+                "resume": True,
+                "skip_known_errors": True,
+                "write_error_traces": True,
+                "target_shard_size_gb": 1.0,
+            },
+            "output": {
+                "root_data_dir": "data",
+                "raw_subdir_name": "raw",
+                "processed_subdir_name": "processed",
+                "state_subdir_name": "state",
+                "metadata_filename": "metadata.json",
+            },
+            "datasets": {
+                "nyu_depth_v2": {
+                    "enabled": True,
+                    "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "config.json"
+            path.write_text(json.dumps(payload))
+            with self.assertRaises(ValueError):
+                load_config(path)
+
+        payload["datasets"]["nyu_depth_v2"]["selection"] = "invalid"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "config.json"
+            path.write_text(json.dumps(payload))
+            with self.assertRaises(ValueError):
+                load_config(path)
+
+        payload["datasets"]["nyu_depth_v2"]["selection"] = 0.5
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "config.json"
+            path.write_text(json.dumps(payload))
+            config = load_config(path)
+        self.assertEqual(config.datasets["nyu_depth_v2"].options["selection"], 0.5)
 
 
 if __name__ == "__main__":

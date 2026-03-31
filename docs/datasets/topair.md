@@ -19,8 +19,19 @@
 
 - The repository now includes an initial `TopAirPipeline`.
 - The current implementation treats one top-level trajectory folder as the complete download unit.
-- Download is HF-backed and materializes the whole selected trajectory folder.
+- Download is HF-backed.
 - There is no archive extraction stage in the current implementation.
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means one readable frame path from the first selected trajectory, not the whole trajectory folder.
+- In the current pipeline, that means downloading only:
+  - one RGB file under `<trajectory>/images/`
+  - the paired depth file under `<trajectory>/depth/`
+  - the paired semantic file under `<trajectory>/seg_id/` when semantic masks are enabled
+  - `camera_loc.txt` when present so provenance still includes camera pose
+- `selection: "all"` means all selected or discovered trajectories, each downloaded fully.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered trajectory pool, with each selected trajectory downloaded fully.
 
 ## Current Assumptions
 

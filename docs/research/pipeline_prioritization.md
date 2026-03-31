@@ -85,9 +85,9 @@ The practical implication is:
 - every dataset named above should be treated as a high-value benchmark signal when evaluating future roadmap changes
 - however, near-term integration order should still prefer the datasets whose geometry, packaging, and engineering cost fit the current repository best
 
-## Minimum Complete Download Unit
+## Minimum Readable Selection Path
 
-For this repository, one practical prioritization factor is the size of the smallest complete non-partial acquisition unit.
+For this repository, one practical prioritization factor is the size of the smallest source subset that still yields a readable `(image, distance, ray_dir)` sample.
 
 This matters because the preferred workflow is:
 
@@ -102,7 +102,7 @@ Based on the current dataset notes and HF triage in this repository, the high-va
   - this is by far the smallest confirmed complete unit among the current high-value synthetic candidates
 - `yaraalaa0/TopAir`
   - current implementation uses one trajectory folder such as `AssetsvilleTown_2`
-  - the reviewed HF card indicates a complete trajectory folder is about `198 MB`, which is a favorable non-partial smoke unit
+  - the reviewed HF card indicates a complete trajectory folder is about `198 MB`, which is a favorable minimum-readable smoke unit
 - `COLE-Ricoh/ToF-360`
   - current notes suggest one scene folder is the natural complete unit
   - only 4 scenes exist in the reviewed source, so the acquisition model looks manageable even though byte size is not yet pinned down
@@ -110,14 +110,14 @@ Based on the current dataset notes and HF triage in this repository, the high-va
   - visible HF shard size is tiny
   - however, its geometry quality remains weak for this project, so low download cost does not make it a strong corpus target
 
-High-value datasets whose minimum complete units are currently known to be large, awkward, or not yet favorable for tiny non-partial runs include:
+High-value datasets whose minimum readable selection paths are currently known to be large, awkward, or not yet favorable for tiny smoke runs include:
 
 - `Pointcept/arkitscenes-compressed`
   - one `arkitscenes_*.tar.gz` shard is about 9.5 GB on the reviewed HF tree
 - `sayakpaul/diode-subset-train`
   - one `train_subset.tar.gz` is about 12.8 GB
 - `Gen3DF/Structured3d-preprocessed`
-  - current HF mirror appears to require effectively full-archive handling for non-partial correctness
+  - current HF mirror appears to require effectively full-archive handling even for minimum-readable correctness
 - `theairlabcmu/tartanair`
   - complete environment/difficulty/modality slices are operationally convenient, but still much heavier than per-frame datasets
 - `GaussianWorld/Hypersim`
@@ -135,9 +135,9 @@ For the specifically high-value datasets reinforced by the MoGe 2-style training
 - medium but still workable complete units:
   - `GaussianWorld/Hypersim`: one scene archive
   - `theairlabcmu/tartanair`: one complete environment/difficulty RGB-depth slice
-- large or currently awkward complete units:
+- large or currently awkward minimum-readable paths:
   - `Pointcept/arkitscenes-compressed`: one archive shard, about 9.5 GB
-  - `Gen3DF/Structured3d-preprocessed`: effectively very large archive-scale handling for non-partial correctness
+  - `Gen3DF/Structured3d-preprocessed`: effectively very large archive-scale handling even for minimum-readable correctness
 - high-value but minimum unit not yet well confirmed:
   - `MegaDepth`
   - `Taskonomy`

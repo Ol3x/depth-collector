@@ -19,7 +19,7 @@ class TartanGroundPipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        environment_count: int = 1,
+        selection: object = "minimum_readable",
         process_ratio: float = 1.0,
     ) -> dict[str, object]:
         return {
@@ -49,8 +49,8 @@ class TartanGroundPipelineTest(unittest.TestCase):
                 "tartanground": {
                     "enabled": True,
                     "hf_dataset_id": "theairlabcmu/TartanGround",
+                    "selection": selection,
                     "environments": ["AbandonedCable"],
-                    "environment_count": environment_count,
                     "versions": ["omni"],
                     "trajectories": ["P0000"],
                     "camera_names": ["lcam_front"],
@@ -156,7 +156,7 @@ class TartanGroundPipelineTest(unittest.TestCase):
                 ],
             )
 
-    def test_environment_count_applies_to_complete_group_pool(self) -> None:
+    def test_minimum_readable_selection_applies_to_complete_group_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
             pipeline.dataset_config.options["versions"] = ["omni", "diff"]
@@ -195,6 +195,70 @@ class TartanGroundPipelineTest(unittest.TestCase):
                 pipeline._hub_repo_filename(unit),
                 "AbandonedCable/Data_omni/P0000/image_lcam_front.zip",
             )
+
+    def test_minimum_readable_download_writes_single_member_archives_from_local_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            pipeline.dataset_config.options["local_archive_root"] = source_dir
+            source_root = Path(source_dir) / "AbandonedCable" / "Data_omni" / "P0000"
+            source_root.mkdir(parents=True, exist_ok=True)
+
+            image_archive = source_root / "image_lcam_front.zip"
+            depth_archive = source_root / "depth_lcam_front.zip"
+            with tempfile.TemporaryDirectory() as build_dir:
+                build_root = Path(build_dir)
+                for frame_id in ("000000_lcam_front", "000001_lcam_front"):
+                    image = np.zeros((4, 6, 3), dtype=np.uint8)
+                    image[..., 1] = 128
+                    image[..., 2] = 224
+                    image_path = build_root / "image_lcam_front" / f"{frame_id}.png"
+                    image_path.parent.mkdir(parents=True, exist_ok=True)
+                    Image.fromarray(image).save(image_path)
+                    depth = np.full((4, 6), 2.0, dtype=np.float32)
+                    depth_path = build_root / "depth_lcam_front" / f"{frame_id}_depth.png"
+                    depth_path.parent.mkdir(parents=True, exist_ok=True)
+                    rgba = np.frombuffer(depth.astype("<f4").tobytes(), dtype=np.uint8).reshape(4, 6, 4)
+                    Image.fromarray(rgba, mode="RGBA").save(depth_path)
+                with zipfile.ZipFile(image_archive, "w") as archive:
+                    archive.write(
+                        build_root / "image_lcam_front" / "000000_lcam_front.png",
+                        arcname="image_lcam_front/000000_lcam_front.png",
+                    )
+                    archive.write(
+                        build_root / "image_lcam_front" / "000001_lcam_front.png",
+                        arcname="image_lcam_front/000001_lcam_front.png",
+                    )
+                with zipfile.ZipFile(depth_archive, "w") as archive:
+                    archive.write(
+                        build_root / "depth_lcam_front" / "000000_lcam_front_depth.png",
+                        arcname="depth_lcam_front/000000_lcam_front_depth.png",
+                    )
+                    archive.write(
+                        build_root / "depth_lcam_front" / "000001_lcam_front_depth.png",
+                        arcname="depth_lcam_front/000001_lcam_front_depth.png",
+                    )
+
+            image_unit = TartanGroundArchiveUnit(
+                environment="AbandonedCable",
+                version="omni",
+                trajectory="P0000",
+                modality="image",
+                camera_name="lcam_front",
+            )
+            depth_unit = TartanGroundArchiveUnit(
+                environment="AbandonedCable",
+                version="omni",
+                trajectory="P0000",
+                modality="depth",
+                camera_name="lcam_front",
+            )
+            pipeline.download_unit(image_unit)
+            pipeline.download_unit(depth_unit)
+
+            with zipfile.ZipFile(pipeline._archive_path(image_unit)) as archive:
+                self.assertEqual(archive.namelist(), ["image_lcam_front/000000_lcam_front.png"])
+            with zipfile.ZipFile(pipeline._archive_path(depth_unit)) as archive:
+                self.assertEqual(archive.namelist(), ["depth_lcam_front/000000_lcam_front_depth.png"])
 
     def test_extract_and_enumerate_real_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

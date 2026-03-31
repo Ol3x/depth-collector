@@ -1,11 +1,35 @@
 from __future__ import annotations
 
+from importlib import import_module
 import json
 from pathlib import Path
 
 from depth_collector.config import RootConfig, load_config
 from depth_collector.core.pipeline import DatasetPipeline
-from depth_collector.datasets import PIPELINE_TYPES
+
+PIPELINE_TYPE_PATHS = {
+    "hypersim": "depth_collector.datasets.hypersim:HypersimPipeline",
+    "megadepth": "depth_collector.datasets.megadepth:MegaDepthPipeline",
+    "diode_subset_train": "depth_collector.datasets.diode:DIODEPipeline",
+    "tartanair": "depth_collector.datasets.tartanair:TartanAirPipeline",
+    "tartanground": "depth_collector.datasets.tartanground:TartanGroundPipeline",
+    "topair": "depth_collector.datasets.topair:TopAirPipeline",
+    "tof_360": "depth_collector.datasets.tof_360:ToF360Pipeline",
+    "urbansyn": "depth_collector.datasets.urbansyn:UrbanSynPipeline",
+    "virtual_kitti_2": "depth_collector.datasets.virtual_kitti_2:VirtualKITTI2Pipeline",
+    "wmg_stereo_flying": "depth_collector.datasets.wmg_stereo_flying:WMGStereoFlyingPipeline",
+    "wmg_stereo_indoor": "depth_collector.datasets.wmg_stereo_indoor:WMGStereoIndoorPipeline",
+    "wmg_stereo_nature": "depth_collector.datasets.wmg_stereo_nature:WMGStereoNaturePipeline",
+}
+
+
+def _resolve_pipeline_type(dataset_name: str) -> type[DatasetPipeline] | None:
+    target = PIPELINE_TYPE_PATHS.get(dataset_name)
+    if target is None:
+        return None
+    module_name, _, attr_name = target.partition(":")
+    module = import_module(module_name)
+    return getattr(module, attr_name)
 
 
 def build_enabled_pipelines(config: RootConfig) -> list[DatasetPipeline]:
@@ -13,7 +37,7 @@ def build_enabled_pipelines(config: RootConfig) -> list[DatasetPipeline]:
     for dataset_name, dataset_config in config.datasets.items():
         if not dataset_config.enabled:
             continue
-        pipeline_type = PIPELINE_TYPES.get(dataset_name)
+        pipeline_type = _resolve_pipeline_type(dataset_name)
         if pipeline_type is None:
             raise ValueError(f"no pipeline registered for enabled dataset: {dataset_name}")
         pipelines.append(pipeline_type(config, dataset_name))

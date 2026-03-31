@@ -20,9 +20,21 @@
 ## Current Pipeline Status
 
 - The repository now includes an initial `DIODEPipeline`.
-- The current implementation treats `train_subset.tar.gz` as the complete download unit.
+- `selection: "all"` still treats `train_subset.tar.gz` as the complete download unit.
+- For `selection: "minimum_readable"`, the implementation now materializes a tiny tarball containing one readable sample rather than retaining the whole archive.
 - Download is HF-backed through the shared helper and extraction is tar-based.
 - Source items are paired from `*.png`, `*_depth.npy`, and `*_depth_mask.npy`.
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means the smallest source subset that still yields one readable `(image, distance, ray_dir)` sample.
+- For DIODE, that subset is one extracted frame with:
+  - `*.png`
+  - `*_depth.npy`
+  - `*_depth_mask.npy`
+  - enough configured intrinsics to derive canonical `ray_dir`
+- `selection: "all"` means all configured or discovered scene types.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered scene-type pool.
 
 ## Current Assumptions
 

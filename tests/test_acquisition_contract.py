@@ -92,6 +92,25 @@ class AcquisitionContractTest(unittest.TestCase):
         combined_source = "\n".join(path.read_text() for path in dataset_files)
         self.assertTrue(any(snippet in combined_source for snippet in required_helper_snippets))
 
+    def test_dataset_modules_implement_shared_selection_contract(self) -> None:
+        dataset_files = [
+            Path("src/depth_collector/datasets/diode.py"),
+            Path("src/depth_collector/datasets/hypersim.py"),
+            Path("src/depth_collector/datasets/megadepth.py"),
+            Path("src/depth_collector/datasets/tartan.py"),
+            Path("src/depth_collector/datasets/topair.py"),
+            Path("src/depth_collector/datasets/tof_360.py"),
+            Path("src/depth_collector/datasets/urbansyn.py"),
+            Path("src/depth_collector/datasets/virtual_kitti_2.py"),
+            Path("src/depth_collector/datasets/wmg_stereo.py"),
+        ]
+        for path in dataset_files:
+            source = path.read_text()
+            self.assertTrue(
+                "apply_dataset_selection(" in source or "dataset_selection()" in source,
+                msg=f"{path} should use the shared selection contract",
+            )
+
     def test_tartanair_remote_download_uses_hf_helper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = self._write_config(
@@ -100,8 +119,8 @@ class AcquisitionContractTest(unittest.TestCase):
                     "tartanair": {
                         "enabled": True,
                         "hf_dataset_id": "theairlabcmu/tartanair",
+                        "selection": "all",
                         "environments": ["neighborhood"],
-                        "environment_count": 1,
                         "difficulties": ["Easy"],
                         "modalities": ["image_left"],
                     }
@@ -121,6 +140,7 @@ class AcquisitionContractTest(unittest.TestCase):
                     "diode_subset_train": {
                         "enabled": True,
                         "hf_dataset_id": "sayakpaul/diode-subset-train",
+                        "selection": "minimum_readable",
                         "archive_filename": "train_subset.tar.gz",
                         "splits": ["train"],
                     }
@@ -128,7 +148,7 @@ class AcquisitionContractTest(unittest.TestCase):
             )
             pipeline = DIODEPipeline(load_config(config_path), "diode_subset_train")
             unit = DIODEArchiveUnit(archive_name="train_subset.tar.gz")
-            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+            with patch.object(pipeline, "hf_open_remote_file", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
 
@@ -140,8 +160,8 @@ class AcquisitionContractTest(unittest.TestCase):
                     "tartanground": {
                         "enabled": True,
                         "hf_dataset_id": "theairlabcmu/TartanGround",
+                        "selection": "all",
                         "environments": ["AbandonedCable"],
-                        "environment_count": 1,
                         "versions": ["omni"],
                         "trajectories": ["P0000"],
                         "camera_names": ["lcam_front"],
@@ -169,15 +189,15 @@ class AcquisitionContractTest(unittest.TestCase):
                     "hypersim": {
                         "enabled": True,
                         "hf_dataset_id": "ritianyu/Hypersim",
+                        "selection": "minimum_readable",
                         "download_mode": "archive",
                         "scenes": ["ai_001_001"],
-                        "scene_count": 1,
                     }
                 },
             )
             pipeline = HypersimPipeline(load_config(config_path), "hypersim")
             unit = HypersimSceneUnit(scene_name="ai_001_001")
-            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+            with patch.object(pipeline, "hf_open_remote_zip", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
 
@@ -189,17 +209,30 @@ class AcquisitionContractTest(unittest.TestCase):
                     "hypersim": {
                         "enabled": True,
                         "hf_dataset_id": "ritianyu/Hypersim",
+                        "selection": "minimum_readable",
                         "download_mode": "directory",
                         "scenes": ["ai_001_001"],
-                        "scene_count": 1,
                     }
                 },
             )
             pipeline = HypersimPipeline(load_config(config_path), "hypersim")
             unit = HypersimSceneUnit(scene_name="ai_001_001")
-            with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
-                with self.assertRaises(_HfHelperCalled):
-                    pipeline.download_unit(unit)
+            with patch.object(
+                pipeline,
+                "hf_list_repo_files",
+                return_value=[
+                    "ai_001_001/images/scene_cam_00_final_preview/frame.0000.tonemap.jpg",
+                    "ai_001_001/images/scene_cam_00_geometry_hdf5/frame.0000.depth_meters.hdf5",
+                    "ai_001_001/images/scene_cam_00_geometry_hdf5/frame.0000.depth_meters_plane.npz",
+                    "ai_001_001/_detail/cam_00/camera_keyframe_orientations.hdf5",
+                    "ai_001_001/_detail/cam_00/camera_keyframe_positions.hdf5",
+                    "ai_001_001/_detail/metadata_scene.csv",
+                    "metadata_camera_parameters.csv",
+                ],
+            ):
+                with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+                    with self.assertRaises(_HfHelperCalled):
+                        pipeline.download_unit(unit)
 
     def test_megadepth_bundle_download_uses_hf_helper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -209,8 +242,8 @@ class AcquisitionContractTest(unittest.TestCase):
                     "megadepth": {
                         "enabled": True,
                         "hf_dataset_id": "ssbai/MegaDepth_v1",
+                        "selection": "minimum_readable",
                         "bundles": ["megadepth_bundle"],
-                        "bundle_count": 1,
                         "scene_info_dir": "prep_scene_info",
                         "scenes": ["0015"],
                     }
@@ -238,9 +271,9 @@ class AcquisitionContractTest(unittest.TestCase):
                     "wmg_stereo_flying": {
                         "enabled": True,
                         "hf_dataset_id": "princeton-vl/WMGStereo",
+                        "selection": "minimum_readable",
                         "release": "release_full",
                         "archives": ["seed0001.tar.gz"],
-                        "archive_count": 1,
                     }
                 },
             )
@@ -250,7 +283,7 @@ class AcquisitionContractTest(unittest.TestCase):
                 archive_name="seed0001.tar.gz",
                 repo_path="release_full/flying/seed0001.tar.gz",
             )
-            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+            with patch.object(pipeline, "hf_open_remote_file", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
 
@@ -262,8 +295,8 @@ class AcquisitionContractTest(unittest.TestCase):
                     "urbansyn": {
                         "enabled": True,
                         "hf_dataset_id": "UrbanSyn/UrbanSyn",
+                        "selection": "minimum_readable",
                         "frames": ["0001"],
-                        "frame_count": 1,
                         "use_semantic_masks": True,
                         "camera_intrinsics": {
                             "width": 2048,
@@ -290,8 +323,8 @@ class AcquisitionContractTest(unittest.TestCase):
                     "tof_360": {
                         "enabled": True,
                         "hf_dataset_id": "COLE-Ricoh/ToF-360",
+                        "selection": "minimum_readable",
                         "scenes": ["scene_0001"],
-                        "scene_count": 1,
                         "rgb_dir": "rgb",
                         "depth_dir": "depth",
                         "depth_scale_divisor": 512.0,
@@ -312,8 +345,8 @@ class AcquisitionContractTest(unittest.TestCase):
                     "topair": {
                         "enabled": True,
                         "hf_dataset_id": "yaraalaa0/TopAir",
+                        "selection": "minimum_readable",
                         "trajectories": ["AssetsvilleTown_2"],
-                        "trajectory_count": 1,
                         "use_semantic_masks": True,
                         "sky_class_id": 0,
                     }
@@ -321,9 +354,19 @@ class AcquisitionContractTest(unittest.TestCase):
             )
             pipeline = TopAirPipeline(load_config(config_path), "topair")
             unit = TopAirTrajectoryUnit(trajectory_name="AssetsvilleTown_2")
-            with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
-                with self.assertRaises(_HfHelperCalled):
-                    pipeline.download_unit(unit)
+            with patch.object(
+                pipeline,
+                "hf_list_repo_files",
+                return_value=[
+                    "AssetsvilleTown_2/images/0001.png",
+                    "AssetsvilleTown_2/depth/0001.png",
+                    "AssetsvilleTown_2/seg_id/0001.png",
+                    "AssetsvilleTown_2/camera_loc.txt",
+                ],
+            ):
+                with patch.object(pipeline, "hf_snapshot_download", side_effect=_HfHelperCalled):
+                    with self.assertRaises(_HfHelperCalled):
+                        pipeline.download_unit(unit)
 
     def test_virtual_kitti_2_remote_download_uses_hf_helper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -333,13 +376,14 @@ class AcquisitionContractTest(unittest.TestCase):
                     "virtual_kitti_2": {
                         "enabled": True,
                         "hf_dataset_id": "ZhengGuangze/VKITTI2_vlbm",
+                        "selection": "minimum_readable",
                         "archive_filename": "vkitti2_vlbm.tar.gz",
                     }
                 },
             )
             pipeline = VirtualKITTI2Pipeline(load_config(config_path), "virtual_kitti_2")
             unit = VirtualKITTI2ArchiveUnit(archive_name="vkitti2_vlbm.tar.gz")
-            with patch.object(pipeline, "hf_hub_download", side_effect=_HfHelperCalled):
+            with patch.object(pipeline, "hf_open_remote_file", side_effect=_HfHelperCalled):
                 with self.assertRaises(_HfHelperCalled):
                     pipeline.download_unit(unit)
 

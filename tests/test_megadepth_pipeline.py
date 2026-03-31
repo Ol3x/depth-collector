@@ -44,8 +44,8 @@ class MegaDepthPipelineTest(unittest.TestCase):
                 "megadepth": {
                     "enabled": True,
                     "hf_dataset_id": "ssbai/MegaDepth_v1",
+                    "selection": "minimum_readable",
                     "bundles": ["megadepth_bundle"],
-                    "bundle_count": 1,
                     "scene_info_dir": "prep_scene_info",
                     "scenes": ["0015"],
                 }
@@ -243,11 +243,10 @@ class MegaDepthPipelineTest(unittest.TestCase):
             self.assertTrue((pipeline.paths.raw / "phoenix" / "0015" / "depths" / "img0000.h5").exists())
             self.assertEqual(tuple(pipeline.enumerate_extraction_units()), ())
 
-    def test_bundle_count_still_selects_complete_bundle_unit(self) -> None:
+    def test_minimum_readable_selection_still_selects_complete_bundle_unit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             payload = self._make_config(tmp_dir)
             payload["datasets"]["megadepth"]["bundles"] = ["megadepth_bundle", "megadepth_bundle_2"]
-            payload["datasets"]["megadepth"]["bundle_count"] = 1
             config_path = Path(tmp_dir) / "config.json"
             config_path.write_text(json.dumps(payload))
             pipeline = MegaDepthPipeline(load_config(config_path), "megadepth")
@@ -272,7 +271,7 @@ class MegaDepthPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             payload = self._make_config(tmp_dir)
             payload["datasets"]["megadepth"]["scenes"] = "*"
-            payload["datasets"]["megadepth"]["scene_count"] = 2
+            payload["datasets"]["megadepth"]["selection"] = "all"
             config_path = Path(tmp_dir) / "config.json"
             config_path.write_text(json.dumps(payload))
             pipeline = MegaDepthPipeline(load_config(config_path), "megadepth")

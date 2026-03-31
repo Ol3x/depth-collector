@@ -1,4 +1,5 @@
 import json
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,8 +19,9 @@ class HypersimPipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        scene_count: int = 1,
+        selection: object = "minimum_readable",
         process_ratio: float = 1.0,
+        download_mode: str = "archive",
     ) -> dict[str, object]:
         return {
             "project": {
@@ -48,17 +50,17 @@ class HypersimPipelineTest(unittest.TestCase):
                 "hypersim": {
                     "enabled": True,
                     "hf_dataset_id": "GaussianWorld/Hypersim",
-                    "download_mode": "archive",
+                    "selection": selection,
+                    "download_mode": download_mode,
                     "scenes": ["ai_001_001"],
-                    "scene_count": scene_count,
                     "camera_trajectories": ["cam_00"],
                 }
             },
         }
 
-    def _make_pipeline(self, tmp_dir: str) -> HypersimPipeline:
+    def _make_pipeline(self, tmp_dir: str, *, selection: object = "minimum_readable", download_mode: str = "archive") -> HypersimPipeline:
         config_path = Path(tmp_dir) / "config.json"
-        config_path.write_text(json.dumps(self._make_config(tmp_dir)))
+        config_path.write_text(json.dumps(self._make_config(tmp_dir, selection=selection, download_mode=download_mode)))
         return HypersimPipeline(load_config(config_path), "hypersim")
 
     def _write_hdf5(self, path: Path, array: np.ndarray) -> None:
@@ -81,12 +83,11 @@ class HypersimPipelineTest(unittest.TestCase):
                 ],
             )
 
-    def test_bad_scenes_are_filtered_before_scene_count(self) -> None:
+    def test_bad_scenes_are_filtered_before_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
             pipeline.dataset_config.options["scenes"] = ["ai_001_001", "ai_001_002", "ai_001_003"]
             pipeline.dataset_config.options["bad_scenes"] = ["ai_001_001"]
-            pipeline.dataset_config.options["scene_count"] = 1
             units = list(pipeline.enumerate_download_units())
             self.assertEqual(units, [HypersimSceneUnit(scene_name="ai_001_002")])
 
@@ -191,8 +192,7 @@ class HypersimPipelineTest(unittest.TestCase):
 
     def test_directory_mode_downloads_scene_tree_without_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            pipeline = self._make_pipeline(tmp_dir)
-            pipeline.dataset_config.options["download_mode"] = "directory"
+            pipeline = self._make_pipeline(tmp_dir, download_mode="directory", selection="all")
             with tempfile.TemporaryDirectory() as source_dir:
                 source_root = Path(source_dir)
                 self._write_test_scene_directory(source_root, "ai_001_001")
@@ -212,6 +212,50 @@ class HypersimPipelineTest(unittest.TestCase):
                 ).exists()
             )
             self.assertEqual(list(pipeline.enumerate_extraction_units()), [])
+
+    def test_minimum_readable_directory_mode_materializes_single_sample_scene(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, download_mode="directory")
+            with tempfile.TemporaryDirectory() as source_dir:
+                source_root = Path(source_dir)
+                scene_root = self._write_test_scene_directory(source_root, "ai_001_001")
+                final_root = scene_root / "images" / "scene_cam_00_final_preview"
+                geometry_root = scene_root / "images" / "scene_cam_00_geometry_hdf5"
+                Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8)).save(final_root / "frame.0001.tonemap.jpg")
+                self._write_hdf5(geometry_root / "frame.0001.depth_meters.hdf5", np.ones((2, 2), dtype=np.float32))
+                np.savez(geometry_root / "frame.0001.depth_meters_plane.npz", data=np.ones((2, 2), dtype=np.float32))
+                orientations = np.stack([np.eye(3, dtype=np.float32), np.eye(3, dtype=np.float32)], axis=0)
+                positions = np.zeros((2, 3), dtype=np.float32)
+                self._write_hdf5(scene_root / "_detail" / "cam_00" / "camera_keyframe_orientations.hdf5", orientations)
+                self._write_hdf5(scene_root / "_detail" / "cam_00" / "camera_keyframe_positions.hdf5", positions)
+                pipeline.dataset_config.options["local_archive_root"] = str(source_root)
+
+                unit = HypersimSceneUnit(scene_name="ai_001_001")
+                pipeline.download_unit(unit)
+
+            downloaded_scene_root = pipeline._scene_root("ai_001_001")
+            self.assertTrue((downloaded_scene_root / "images" / "scene_cam_00_final_preview" / "frame.0000.tonemap.jpg").exists())
+            self.assertFalse((downloaded_scene_root / "images" / "scene_cam_00_final_preview" / "frame.0001.tonemap.jpg").exists())
+            frame_index_map = json.loads((downloaded_scene_root / "_detail" / "cam_00" / "frame_index_map.json").read_text())
+            self.assertEqual(frame_index_map, {"frame.0000": 0})
+
+    def test_minimum_readable_archive_mode_materializes_single_sample_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            source_pipeline = self._make_pipeline(source_dir)
+            unit = HypersimSceneUnit(scene_name="ai_001_001")
+            archive_path = self._write_test_archive(source_pipeline, unit)
+            with zipfile.ZipFile(archive_path, "a") as archive:
+                archive.writestr("ai_001_001/images/scene_cam_00_final_preview/frame.0001.tonemap.jpg", b"extra")
+            pipeline.dataset_config.options["local_archive_root"] = source_pipeline.paths.raw
+
+            pipeline.download_unit(unit)
+
+            with zipfile.ZipFile(pipeline._archive_path(unit)) as archive:
+                names = sorted(archive.namelist())
+            self.assertIn("ai_001_001/_detail/cam_00/frame_index_map.json", names)
+            self.assertIn("metadata_camera_parameters.csv", names)
+            self.assertNotIn("ai_001_001/images/scene_cam_00_final_preview/frame.0001.tonemap.jpg", names)
 
     def test_build_sample_uses_scale_and_camera_convention_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

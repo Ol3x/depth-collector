@@ -27,11 +27,13 @@
   "datasets": {
     "nyu_depth_v2": {
       "enabled": false,
-      "hf_dataset_id": "sayakpaul/nyu_depth_v2"
+      "hf_dataset_id": "sayakpaul/nyu_depth_v2",
+      "selection": "minimum_readable"
     },
     "diode_subset_train": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "sayakpaul/diode-subset-train",
+      "selection": "minimum_readable",
       "archive_filename": "train_subset.tar.gz",
       "splits": [
         "train"
@@ -48,8 +50,9 @@
       }
     },
     "hypersim": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "ritianyu/Hypersim",
+      "selection": "minimum_readable",
       "download_mode": "directory",
       "scenes": [
         "ai_001_001", "ai_001_002", "ai_001_003", "ai_001_004", "ai_001_005", "ai_001_006", "ai_001_007", "ai_001_008", "ai_001_009", "ai_001_010",
@@ -110,26 +113,24 @@
       "bad_scenes": [
         "ai_004_009",
         "ai_038_007"
-      ],
-      "scene_count": 4
+      ]
     },
     "megadepth": {
       "enabled": false,
       "hf_dataset_id": "ssbai/MegaDepth_v1",
+      "selection": "minimum_readable",
       "bundles": [
         "megadepth_bundle"
       ],
-      "bundle_count": 1,
       "scene_info_dir": "prep_scene_info",
       "archive_part_prefix": "MegaDepth_v1.tar.gz_part",
-      "scenes": "*",
-      "scene_count": 1
+      "scenes": "*"
     },
     "tartanair": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "theairlabcmu/tartanair",
+      "selection": "minimum_readable",
       "environments": "*",
-      "environment_count": 1,
       "difficulties": [
         "Easy",
         "Hard"
@@ -139,10 +140,10 @@
       ]
     },
     "tartanground": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "theairlabcmu/TartanGround",
+      "selection": "minimum_readable",
       "environments": "*",
-      "environment_count": 1,
       "versions": "*",
       "trajectories": "*",
       "camera_names": "*",
@@ -153,16 +154,16 @@
     "virtual_kitti_2": {
       "enabled": true,
       "hf_dataset_id": "ZhengGuangze/VKITTI2_vlbm",
+      "selection": "minimum_readable",
       "archive_filename": "vkitti2_vlbm.tar.gz",
       "sequences": "*",
-      "sequence_count": 1,
       "depth_semantics": "distance"
     },
     "topair": {
       "enabled": true,
       "hf_dataset_id": "yaraalaa0/TopAir",
+      "selection": "minimum_readable",
       "trajectories": "*",
-      "trajectory_count": 1,
       "use_semantic_masks": true,
       "sky_class_id": 0,
       "depth_semantics": "distance",
@@ -179,8 +180,8 @@
     "tof_360": {
       "enabled": false,
       "hf_dataset_id": "COLE-Ricoh/ToF-360",
+      "selection": "minimum_readable",
       "scenes": "*",
-      "scene_count": 1,
       "rgb_dir": "rgb",
       "depth_dir": "depth",
       "depth_scale_divisor": 512.0,
@@ -189,8 +190,8 @@
     "urbansyn": {
       "enabled": true,
       "hf_dataset_id": "UrbanSyn/UrbanSyn",
+      "selection": "minimum_readable",
       "frames": "*",
-      "frame_count": 1,
       "use_semantic_masks": true,
       "sky_class_id": 10,
       "depth_semantics": "z_depth",
@@ -205,25 +206,25 @@
       }
     },
     "wmg_stereo_flying": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "princeton-vl/WMGStereo",
+      "selection": "minimum_readable",
       "release": "release_full",
-      "archives": "*",
-      "archive_count": 1
+      "archives": "*"
     },
     "wmg_stereo_nature": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "princeton-vl/WMGStereo",
+      "selection": "minimum_readable",
       "release": "release_full",
-      "archives": "*",
-      "archive_count": 1
+      "archives": "*"
     },
     "wmg_stereo_indoor": {
-      "enabled": false,
+      "enabled": true,
       "hf_dataset_id": "princeton-vl/WMGStereo",
+      "selection": "minimum_readable",
       "release": "release_full",
-      "archives": "*",
-      "archive_count": 1
+      "archives": "*"
     }
   }
 }

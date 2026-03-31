@@ -142,16 +142,6 @@ class TartanPipeline(DatasetPipeline, ABC):
     def _list_hf_files(self, repo_id: str) -> list[str]:
         return self.hf_list_repo_files(repo_id=repo_id, repo_type="dataset")
 
-    def _selected_environment_count(self) -> int:
-        configured = self.dataset_config.options.get("environment_count")
-        environments = self._selected_environments()
-        if configured is None:
-            return len(environments)
-        count = int(configured)
-        if count < 1:
-            raise ValueError("environment_count must be at least 1")
-        return min(count, len(environments))
-
     def _selected_difficulties(self) -> list[str]:
         return self._get_option_list("difficulties", self.DEFAULT_DIFFICULTIES)
 
@@ -168,10 +158,7 @@ class TartanPipeline(DatasetPipeline, ABC):
         for environment in self._selected_environments():
             for difficulty in self._selected_difficulties():
                 groups.append((environment, difficulty))
-        return self._limit_group_keys(groups)
-
-    def _limit_group_keys(self, groups: list[tuple[object, ...]]) -> list[tuple[object, ...]]:
-        return groups[: self._selected_environment_count()]
+        return [tuple(group) for group in self.apply_dataset_selection(groups)]
 
     def enumerate_download_units(self) -> Iterable[object]:
         for group_key in self._selected_group_keys():
@@ -191,6 +178,9 @@ class TartanPipeline(DatasetPipeline, ABC):
         return units
 
     def download_unit(self, unit: TartanArchiveUnit) -> None:
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            self._download_minimum_readable_unit(unit)
+            return
         archive_path = self._archive_path(unit)
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         downloaded_path = self._download_archive_from_hub(unit)
@@ -692,6 +682,46 @@ class TartanPipeline(DatasetPipeline, ABC):
         prefix = str(self.dataset_config.options.get("hf_path_prefix", "")).strip("/")
         parts = [prefix, unit.environment, unit.difficulty, unit.filename]
         return "/".join(part for part in parts if part)
+
+    def _zip_member_names(self, unit: object) -> list[str]:
+        local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if local_archive_root:
+            source_archive_path = Path(str(local_archive_root)) / self._hub_repo_filename(unit)
+            if not source_archive_path.exists():
+                raise FileNotFoundError(f"missing local archive source: {source_archive_path}")
+            with zipfile.ZipFile(source_archive_path) as archive:
+                return [info.filename for info in archive.infolist() if not info.is_dir()]
+        with self.hf_open_remote_zip(
+            repo_id=self.dataset_config.hf_dataset_id,
+            filename=self._hub_repo_filename(unit),
+            repo_type="dataset",
+            revision=self.dataset_config.revision,
+        ) as archive:
+            return [info.filename for info in archive.infolist() if not info.is_dir()]
+
+    def _write_single_member_archive(self, unit: object, member_name: str) -> None:
+        archive_path = self._archive_path(unit)
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if local_archive_root:
+            source_archive_path = Path(str(local_archive_root)) / self._hub_repo_filename(unit)
+            if not source_archive_path.exists():
+                raise FileNotFoundError(f"missing local archive source: {source_archive_path}")
+            with zipfile.ZipFile(source_archive_path) as source_archive:
+                payload = source_archive.read(member_name)
+        else:
+            with self.hf_open_remote_zip(
+                repo_id=self.dataset_config.hf_dataset_id,
+                filename=self._hub_repo_filename(unit),
+                repo_type="dataset",
+                revision=self.dataset_config.revision,
+            ) as source_archive:
+                payload = source_archive.read(member_name)
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as output_archive:
+            output_archive.writestr(member_name, payload)
+
+    def _download_minimum_readable_unit(self, unit: object) -> None:
+        raise NotImplementedError(f"{self.dataset_name} must implement minimum-readable archive selection")
 
     def _suggest_shard_splits(self, shard_names: list[str]) -> tuple[list[str], list[str]]:
         if not shard_names:

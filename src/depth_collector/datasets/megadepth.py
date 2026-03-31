@@ -102,7 +102,7 @@ class MegaDepthPipeline(DatasetPipeline):
     def _selected_scenes(self) -> list[str]:
         configured = self.dataset_config.options.get("scenes")
         if isinstance(configured, str) and configured.strip().lower() not in self.ALL_SELECTOR_VALUES:
-            return [configured]
+            return [str(scene) for scene in self.apply_dataset_selection([configured])]
         if isinstance(configured, list):
             scenes = [
                 str(scene)
@@ -110,14 +110,14 @@ class MegaDepthPipeline(DatasetPipeline):
                 if str(scene) and str(scene).strip().lower() not in self.ALL_SELECTOR_VALUES
             ]
             if scenes:
-                return scenes
+                return [str(scene) for scene in self.apply_dataset_selection(scenes)]
         scene_info_root = self.paths.raw / self._scene_info_dir_name()
         discovered = sorted(path.stem for path in scene_info_root.glob("*.npz"))
         if discovered:
-            return discovered
+            return [str(scene) for scene in self.apply_dataset_selection(discovered)]
         remote_scene_files = self._remote_scene_names()
         if remote_scene_files:
-            return remote_scene_files
+            return [str(scene) for scene in self.apply_dataset_selection(remote_scene_files)]
         raise ValueError(
             "MegaDepth requires configured `datasets.megadepth.scenes`, remote scene-info `.npz` files, "
             "or existing local scene-info `.npz` files"
@@ -137,13 +137,7 @@ class MegaDepthPipeline(DatasetPipeline):
             bundles = [str(bundle) for bundle in configured if str(bundle)]
         else:
             bundles = [self._bundle_unit_name()]
-        count = self.dataset_config.options.get("bundle_count")
-        if count is None:
-            return bundles
-        bundle_count = int(count)
-        if bundle_count < 1:
-            raise ValueError("bundle_count must be at least 1")
-        return bundles[: min(bundle_count, len(bundles))]
+        return [str(bundle) for bundle in self.apply_dataset_selection(bundles)]
 
     def _scene_info_dir_name(self) -> str:
         return str(self.dataset_config.options.get("scene_info_dir", "prep_scene_info"))

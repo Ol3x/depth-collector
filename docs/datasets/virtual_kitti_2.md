@@ -19,10 +19,21 @@
 ## Current Pipeline Status
 
 - The repository now includes an initial `VirtualKITTI2Pipeline`.
-- The current implementation downloads one archive, `vkitti2_vlbm.tar.gz`, as the complete HF download unit.
-- Extraction materializes the dataset root `vkitti2_vlbm/` under the dataset raw directory.
-- Processing then enumerates sequence folders such as `Scene06_fog` from the extracted tree.
-- The default config still selects only one sequence for the smoke run, but the archive-backed config is intended to support the full dataset as well.
+- `selection: "all"` and ratio selections still operate on the shared archive-backed package, `vkitti2_vlbm.tar.gz`.
+- For `selection: "minimum_readable"`, the implementation now materializes a tiny local tarball that contains only one readable sample and the metadata needed for that sample.
+- Extraction still materializes the dataset root `vkitti2_vlbm/` under the dataset raw directory, but for minimum-readable builds that extracted tree is a one-sample subset rather than the whole source package.
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means the smallest source subset that still yields one readable `(image, distance, ray_dir)` sample.
+- For VKITTI2, that subset is:
+  - one RGB file under `<sequence>/rgbs/`
+  - one paired depth file under `<sequence>/depths/`
+  - sliced intrinsics and extrinsics for that frame
+  - `scene_info.json`
+  - a small frame-index map so the pipeline can preserve the original frame id while reading sliced camera arrays
+- `selection: "all"` means all extracted sequences.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered sequence pool.
 
 ## Current Assumptions
 
@@ -33,5 +44,5 @@
 - The default archive filename is `vkitti2_vlbm.tar.gz`.
 - The default config uses:
   - `sequences: "*"`
-  - `sequence_count: 1`
-  for a small complete-unit smoke run, but the selectors are intended to scale cleanly to the full dataset.
+  - `selection: "minimum_readable"`
+  for a small smoke run that still yields at least one readable `(image, distance, ray_dir)` sample without downloading the full archive payload.

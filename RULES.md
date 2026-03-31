@@ -21,6 +21,18 @@ This file defines implementation constraints that should remain stable across th
 - Development-time partial processing must be configurable through that same config.
 - The config must include `max_dist`, the maximum representable camera distance.
 
+## Dataset Selection Contract
+
+- Every dataset config entry must include `selection`.
+- `selection` must support exactly three forms:
+  - `"minimum_readable"`
+  - `"all"`
+  - a float in `(0, 1]`
+- `"minimum_readable"` means the pipeline must select the smallest source subset that still yields at least one readable `(image, distance, ray_dir)` sample.
+- Candidate-pool fields such as `scenes`, `environments`, `bundles`, `trajectories`, `frames`, or `sequences` remain dataset-specific, but `selection` is repository-wide.
+- A dataset pipeline or config shape is not valid if it does not support and correctly handle all three `selection` choices.
+- Do not reintroduce dataset-specific count selectors such as `scene_count`, `environment_count`, `bundle_count`, or similar replacements for the shared `selection` contract.
+
 ## Config-State Reconciliation
 
 - When a user runs a stage script with a given config, the repository should move the on-disk state toward satisfying that config.
@@ -50,6 +62,14 @@ Every concrete dataset pipeline should implement logic to:
 - extract or materialize source files and remove no-longer-needed archives when appropriate
 - process source samples into the canonical representation using `numpy`-centric logic
 - store processed outputs as PyTorch `.pt` payloads packaged into WebDataset `.tar` shards
+
+## Core Output Contract
+
+- PyTorch `.pt` shard payloads are a core project contract, not an interchangeable implementation detail.
+- Agents must not replace `.pt` payloads with `.npy`, JSON, or any other format without explicit user approval.
+- Agents must not remove PyTorch from the project or environment requirements when doing so would change that output contract.
+- If the environment or packaging is broken, the fix must preserve the `.pt` artifact contract unless the user explicitly authorizes a contract change.
+- When a proposed fix would change dataset artifacts, serialization format, or downstream compatibility, stop and ask for approval instead of making the change.
 
 This rule is strict:
 

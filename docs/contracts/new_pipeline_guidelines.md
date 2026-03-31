@@ -8,7 +8,7 @@ It exists to keep new integrations aligned with the repository's role as a datas
 
 When adding a new pipeline, the goal is:
 
-- support the smallest honest complete non-partial acquisition unit first
+- support the minimum readable sample path first
 - support scaling to the full dataset later without redesigning the pipeline
 - preserve the canonical repository contract:
   - image
@@ -21,28 +21,30 @@ The implementation should be good enough for a minimal end-to-end smoke run now 
 
 ## Full-Scale Config Requirement
 
-The config for a new dataset must be designed to support full-dataset download and processing, even if the default enabled settings only exercise a minimal non-partial smoke unit.
+The config for a new dataset must be designed to support full-dataset download and processing, even if the default enabled settings only exercise a minimum readable smoke run.
 
 That means:
 
-- the default config may select one complete unit for a quick test
-- but the selectors must also allow expansion to the full dataset
+- the default config may select the minimum readable subset for a quick test
+- but the selector must also allow expansion to the full dataset
 - the pipeline must not hardcode "tiny mode" as its only supported operating mode
 
-Typical examples:
+Every dataset config must include `selection`, and every new pipeline must correctly handle all three allowed values:
 
-- `scene_count: 1` with `scenes: "*"`
-- `trajectory_count: 1` with `trajectories: "*"`
-- `environment_count: 1` with `environments: "*"`
+- `"minimum_readable"`
+- `"all"`
+- a float in `(0, 1]`
 
-The pipeline should work the same way when the count is increased or removed.
+Candidate-pool fields such as `scenes`, `trajectories`, `environments`, `bundles`, `frames`, or `sequences` remain dataset-specific, but `selection` is now a repository-wide contract.
+
+`"minimum_readable"` specifically means: select the smallest source subset that still yields at least one readable `(image, distance, ray_dir)` sample.
 
 ## Required Implementation Process
 
 New dataset integrations should be built in this order:
 
 1. Inspect the actual source packaging first.
-2. Identify the smallest honest complete non-partial acquisition unit.
+2. Identify the minimum readable sample path.
 3. Confirm the geometry path and scale semantics.
 4. Define explicit download units, extraction units, and source items.
 5. Implement the dataset logic inside the shared runtime.
@@ -83,7 +85,7 @@ A new pipeline must not:
 - duplicate generic geometry, validation, sharding, or state logic
 - make smoke-test settings the only supported operating mode
 - silently guess geometry semantics without exposing the assumption in config and docs
-- treat partial fragments as a valid minimum unit if a larger honest complete unit exists
+- claim `"minimum_readable"` support without proving that the selected subset yields at least one readable `(image, distance, ray_dir)` sample
 
 ## Unit Model Requirement
 
@@ -140,8 +142,9 @@ Every new pipeline should update:
 
 The documentation should make these points explicit:
 
-- what the complete acquisition unit is
-- what the default tiny-run selectors do
+- what the minimum readable sample path is
+- what the dataset-native candidate pool is
+- what the default tiny-run selector does
 - how to expand the config to the full dataset
 - what geometry assumptions are currently provisional
 

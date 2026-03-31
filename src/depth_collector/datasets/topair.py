@@ -116,13 +116,89 @@ class TopAirPipeline(DatasetPipeline):
                 trajectory_names = self._discover_trajectory_names_from_root(self.paths.raw)
             if not trajectory_names:
                 trajectory_names = self._discover_trajectory_names_from_remote()
-        count = self.dataset_config.options.get("trajectory_count")
-        if count is None:
-            return trajectory_names
-        trajectory_count = int(count)
-        if trajectory_count < 1:
-            raise ValueError("trajectory_count must be at least 1")
-        return trajectory_names[: min(trajectory_count, len(trajectory_names))]
+        return [str(name) for name in self.apply_dataset_selection(trajectory_names)]
+
+    def _is_minimum_readable_selection(self) -> bool:
+        return self.dataset_selection() == self.MINIMUM_READABLE_SELECTION
+
+    def _image_like_suffix(self, path: Path) -> bool:
+        return path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+
+    def _minimum_readable_relative_paths_from_root(self, root: Path, trajectory_name: str) -> list[Path]:
+        trajectory_root = root / trajectory_name
+        images_root = trajectory_root / "images"
+        depth_root = trajectory_root / "depth"
+        semantic_root = trajectory_root / "seg_id"
+        if not images_root.exists() or not depth_root.exists():
+            raise FileNotFoundError(f"missing TopAir minimum-readable source directories under {trajectory_root}")
+
+        depth_by_frame = {
+            path.stem: path.relative_to(root)
+            for path in sorted(depth_root.rglob("*"))
+            if path.is_file() and path.suffix.lower() == ".png"
+        }
+        semantic_by_frame = {
+            path.stem: path.relative_to(root)
+            for path in sorted(semantic_root.rglob("*"))
+            if path.is_file() and path.suffix.lower() == ".png"
+        }
+        for image_path in sorted(images_root.rglob("*")):
+            if not image_path.is_file() or not self._image_like_suffix(image_path):
+                continue
+            frame_id = image_path.stem
+            depth_relative_path = depth_by_frame.get(frame_id)
+            if depth_relative_path is None:
+                continue
+            relative_paths = [
+                image_path.relative_to(root),
+                depth_relative_path,
+            ]
+            if self._use_semantic_masks():
+                semantic_relative_path = semantic_by_frame.get(frame_id)
+                if semantic_relative_path is None:
+                    continue
+                relative_paths.append(semantic_relative_path)
+            camera_loc_path = trajectory_root / "camera_loc.txt"
+            if camera_loc_path.exists():
+                relative_paths.append(camera_loc_path.relative_to(root))
+            return relative_paths
+        raise FileNotFoundError(f"could not identify a minimum-readable TopAir sample under {trajectory_root}")
+
+    def _minimum_readable_repo_paths(self, trajectory_name: str) -> list[str]:
+        prefix = f"{trajectory_name}/"
+        repo_files = [repo_path for repo_path in self._remote_repo_files() if repo_path.startswith(prefix)]
+        depth_by_frame = {
+            Path(repo_path).stem: repo_path
+            for repo_path in sorted(repo_files)
+            if Path(repo_path).parts[:2] == (trajectory_name, "depth") and Path(repo_path).suffix.lower() == ".png"
+        }
+        semantic_by_frame = {
+            Path(repo_path).stem: repo_path
+            for repo_path in sorted(repo_files)
+            if Path(repo_path).parts[:2] == (trajectory_name, "seg_id") and Path(repo_path).suffix.lower() == ".png"
+        }
+        camera_loc_path = next(
+            (repo_path for repo_path in sorted(repo_files) if Path(repo_path).parts == (trajectory_name, "camera_loc.txt")),
+            None,
+        )
+        for repo_path in sorted(repo_files):
+            path = Path(repo_path)
+            if path.parts[:2] != (trajectory_name, "images") or not self._image_like_suffix(path):
+                continue
+            frame_id = path.stem
+            depth_repo_path = depth_by_frame.get(frame_id)
+            if depth_repo_path is None:
+                continue
+            selected_paths = [repo_path, depth_repo_path]
+            if self._use_semantic_masks():
+                semantic_repo_path = semantic_by_frame.get(frame_id)
+                if semantic_repo_path is None:
+                    continue
+                selected_paths.append(semantic_repo_path)
+            if camera_loc_path is not None:
+                selected_paths.append(camera_loc_path)
+            return selected_paths
+        raise FileNotFoundError(f"could not identify a remote minimum-readable TopAir sample for {trajectory_name}")
 
     def enumerate_download_units(self) -> Iterable[TopAirTrajectoryUnit]:
         for trajectory_name in self._selected_trajectory_names():
@@ -134,15 +210,26 @@ class TopAirPipeline(DatasetPipeline):
             source_root = Path(str(local_archive_root)) / unit.trajectory_name
             if not source_root.exists():
                 raise FileNotFoundError(f"missing local TopAir trajectory source: {source_root}")
+            if self._is_minimum_readable_selection():
+                local_root = Path(str(local_archive_root))
+                for relative_path in self._minimum_readable_relative_paths_from_root(local_root, unit.trajectory_name):
+                    destination_path = self.paths.raw / relative_path
+                    destination_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(local_root / relative_path, destination_path)
+                return
             shutil.copytree(source_root, self.paths.raw / unit.trajectory_name, dirs_exist_ok=True)
             return
 
+        if self._is_minimum_readable_selection():
+            allow_patterns = self._minimum_readable_repo_paths(unit.trajectory_name)
+        else:
+            allow_patterns = [f"{unit.trajectory_name}/**"]
         self.hf_snapshot_download(
             repo_id=self.dataset_config.hf_dataset_id,
             repo_type="dataset",
             revision=self.dataset_config.revision,
             local_dir=self.paths.raw,
-            allow_patterns=[f"{unit.trajectory_name}/**"],
+            allow_patterns=allow_patterns,
         )
 
     def enumerate_extraction_units(self) -> Iterable[object]:

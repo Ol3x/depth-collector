@@ -43,6 +43,10 @@ class TartanGroundPipeline(TartanPipeline):
     DEFAULT_CAMERA_NAMES = ()
     DEPTH_SUFFIXES = {".png"}
 
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._minimum_readable_member_cache: dict[tuple[str, str, str, str], dict[str, str]] = {}
+
     def _selected_versions(self) -> list[str]:
         configured = self._configured_versions()
         if configured:
@@ -97,7 +101,7 @@ class TartanGroundPipeline(TartanPipeline):
             if discovered_groups:
                 return [
                     (str(environment), str(version), str(trajectory), str(camera_name))
-                    for environment, version, trajectory, camera_name in self._limit_group_keys(discovered_groups)
+                    for environment, version, trajectory, camera_name in self.apply_dataset_selection(discovered_groups)
                 ]
 
         groups: list[tuple[str, str, str, str]] = []
@@ -108,7 +112,7 @@ class TartanGroundPipeline(TartanPipeline):
                         groups.append((environment, version, trajectory, camera_name))
         return [
             (str(environment), str(version), str(trajectory), str(camera_name))
-            for environment, version, trajectory, camera_name in self._limit_group_keys(groups)
+            for environment, version, trajectory, camera_name in self.apply_dataset_selection(groups)
         ]
 
     def _discover_archive_units(self) -> list[TartanGroundArchiveUnit]:
@@ -338,6 +342,70 @@ class TartanGroundPipeline(TartanPipeline):
             raise ValueError("TartanGround depth PNG must decode to RGBA")
         depth = np.frombuffer(rgba.tobytes(), dtype="<f4").reshape(rgba.shape[:2])
         return depth.astype(np.float32, copy=False)
+
+    def _download_minimum_readable_unit(self, unit: object) -> None:
+        assert isinstance(unit, TartanGroundArchiveUnit)
+        member_map = self._minimum_readable_member_map(
+            unit.environment,
+            unit.version,
+            unit.trajectory,
+            unit.camera_name,
+        )
+        member_name = member_map.get(unit.modality)
+        if member_name is None:
+            raise FileNotFoundError(
+                f"missing minimum-readable member for {unit.environment}/{unit.version}/{unit.trajectory}/{unit.camera_name}/{unit.modality}"
+            )
+        self._write_single_member_archive(unit, member_name)
+
+    def _minimum_readable_member_map(
+        self,
+        environment: str,
+        version: str,
+        trajectory: str,
+        camera_name: str,
+    ) -> dict[str, str]:
+        cache_key = (environment, version, trajectory, camera_name)
+        cached = self._minimum_readable_member_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        image_unit = TartanGroundArchiveUnit(
+            environment=environment,
+            version=version,
+            trajectory=trajectory,
+            modality="image",
+            camera_name=camera_name,
+        )
+        depth_unit = TartanGroundArchiveUnit(
+            environment=environment,
+            version=version,
+            trajectory=trajectory,
+            modality="depth",
+            camera_name=camera_name,
+        )
+        image_members = {
+            self._paired_ground_key(member_name): member_name
+            for member_name in sorted(self._zip_member_names(image_unit))
+            if member_name and any(member_name.lower().endswith(suffix) for suffix in self.IMAGE_SUFFIXES)
+        }
+        depth_members = {
+            self._paired_ground_key(member_name): member_name
+            for member_name in sorted(self._zip_member_names(depth_unit))
+            if member_name and any(member_name.lower().endswith(suffix) for suffix in self.DEPTH_SUFFIXES)
+        }
+        for pairing_key in sorted(image_members):
+            depth_member = depth_members.get(pairing_key)
+            if depth_member is None:
+                continue
+            selected = {
+                "image": image_members[pairing_key],
+                "depth": depth_member,
+            }
+            self._minimum_readable_member_cache[cache_key] = selected
+            return selected
+        raise FileNotFoundError(
+            f"could not identify a minimum-readable TartanGround sample for {environment}/{version}/{trajectory}/{camera_name}"
+        )
 
 
 __all__ = [

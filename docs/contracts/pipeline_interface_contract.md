@@ -2,7 +2,7 @@
 
 This document defines the expected boundary between dataset-specific pipeline code and the shared runtime.
 
-New dataset integrations should also follow [new_pipeline_guidelines.md](/home/olx2024/repos/depth-collector/docs/contracts/new_pipeline_guidelines.md), especially the requirements around honest complete-unit selection, full-dataset-capable config design, and stopping when the available source artifact is the wrong type for this repository.
+New dataset integrations should also follow [new_pipeline_guidelines.md](/home/olx2024/repos/depth-collector/docs/contracts/new_pipeline_guidelines.md), especially the requirements around `selection`, minimum readable sample support, full-dataset-capable config design, and stopping when the available source artifact is the wrong type for this repository.
 
 ## Dataset Pipeline Responsibilities
 
@@ -13,6 +13,7 @@ Dataset pipelines should:
 - define how source items are parsed
 - define dataset-specific camera metadata extraction
 - decide how invalid or missing data should be treated when judgment is required
+- implement `selection` correctly for `"minimum_readable"`, `"all"`, and ratio values in `(0, 1]`
 
 Dataset pipelines should not:
 
@@ -47,6 +48,11 @@ Each dataset pipeline should define a processing item granularity that is:
 - stable enough to support persistent identifiers
 
 In many datasets, this should be one frame or one image-depth pair rather than an entire archive.
+
+The pipeline must also define how its candidate pool is ordered so that:
+
+- `"minimum_readable"` yields the smallest readable `(image, distance, ray_dir)` path
+- ratio selection yields a deterministic prefix of the ordered candidate pool
 
 ## Error Boundary
 

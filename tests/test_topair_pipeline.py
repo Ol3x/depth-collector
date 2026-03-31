@@ -17,7 +17,7 @@ class TopAirPipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        trajectory_count: int = 1,
+        selection: object = "minimum_readable",
         process_ratio: float = 1.0,
     ) -> dict[str, object]:
         return {
@@ -47,8 +47,8 @@ class TopAirPipelineTest(unittest.TestCase):
                 "topair": {
                     "enabled": True,
                     "hf_dataset_id": "yaraalaa0/TopAir",
+                    "selection": selection,
                     "trajectories": "*",
-                    "trajectory_count": trajectory_count,
                     "use_semantic_masks": True,
                     "sky_class_id": 0,
                     "depth_semantics": "distance",
@@ -119,9 +119,40 @@ class TopAirPipelineTest(unittest.TestCase):
                 units = list(pipeline.enumerate_download_units())
             self.assertEqual(units, [TopAirTrajectoryUnit(trajectory_name="AbandonedFactory_1")])
 
-    def test_remote_download_requests_whole_trajectory_folder(self) -> None:
+    def test_minimum_readable_download_requests_single_sample_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
+            unit = TopAirTrajectoryUnit(trajectory_name="AssetsvilleTown_2")
+            with patch.object(
+                pipeline,
+                "hf_list_repo_files",
+                return_value=[
+                    "AssetsvilleTown_2/images/0002.png",
+                    "AssetsvilleTown_2/depth/0002.png",
+                    "AssetsvilleTown_2/seg_id/0002.png",
+                    "AssetsvilleTown_2/images/0003.png",
+                    "AssetsvilleTown_2/depth/0003.png",
+                    "AssetsvilleTown_2/seg_id/0003.png",
+                    "AssetsvilleTown_2/camera_loc.txt",
+                ],
+            ), patch.object(pipeline, "hf_snapshot_download") as download_mock:
+                pipeline.download_unit(unit)
+            download_mock.assert_called_once()
+            self.assertEqual(
+                download_mock.call_args.kwargs["allow_patterns"],
+                [
+                    "AssetsvilleTown_2/images/0002.png",
+                    "AssetsvilleTown_2/depth/0002.png",
+                    "AssetsvilleTown_2/seg_id/0002.png",
+                    "AssetsvilleTown_2/camera_loc.txt",
+                ],
+            )
+
+    def test_all_selection_download_requests_whole_trajectory_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            config_path.write_text(json.dumps(self._make_config(tmp_dir, selection="all")))
+            pipeline = TopAirPipeline(load_config(config_path), "topair")
             unit = TopAirTrajectoryUnit(trajectory_name="AssetsvilleTown_2")
             with patch.object(pipeline, "hf_snapshot_download") as download_mock:
                 pipeline.download_unit(unit)

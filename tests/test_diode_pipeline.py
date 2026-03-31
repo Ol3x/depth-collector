@@ -1,4 +1,5 @@
 import json
+import io
 import tarfile
 import tempfile
 import unittest
@@ -15,7 +16,7 @@ from depth_collector.datasets.diode import DIODEArchiveUnit, DIODESourceItem
 
 
 class DIODEPipelineTest(unittest.TestCase):
-    def _make_config(self, root_data_dir: str) -> dict[str, object]:
+    def _make_config(self, root_data_dir: str, *, selection: object = "minimum_readable") -> dict[str, object]:
         return {
             "project": {
                 "name": "default",
@@ -43,6 +44,7 @@ class DIODEPipelineTest(unittest.TestCase):
                 "diode_subset_train": {
                     "enabled": True,
                     "hf_dataset_id": "sayakpaul/diode-subset-train",
+                    "selection": selection,
                     "archive_filename": "train_subset.tar.gz",
                     "splits": ["train"],
                     "scene_types": "*",
@@ -59,9 +61,9 @@ class DIODEPipelineTest(unittest.TestCase):
             },
         }
 
-    def _make_pipeline(self, tmp_dir: str) -> DIODEPipeline:
+    def _make_pipeline(self, tmp_dir: str, *, selection: object = "minimum_readable") -> DIODEPipeline:
         config_path = Path(tmp_dir) / "config.json"
-        config_path.write_text(json.dumps(self._make_config(tmp_dir)))
+        config_path.write_text(json.dumps(self._make_config(tmp_dir, selection=selection)))
         return DIODEPipeline(load_config(config_path), "diode_subset_train")
 
     def _write_extracted_layout(self, root: Path) -> None:
@@ -85,7 +87,7 @@ class DIODEPipelineTest(unittest.TestCase):
 
     def test_download_uses_local_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
-            pipeline = self._make_pipeline(tmp_dir)
+            pipeline = self._make_pipeline(tmp_dir, selection="all")
             source_archive = Path(source_dir) / "train_subset.tar.gz"
             source_archive.write_bytes(b"test")
             pipeline.dataset_config.options["local_archive_root"] = source_dir
@@ -94,6 +96,37 @@ class DIODEPipelineTest(unittest.TestCase):
             pipeline.download_unit(unit)
 
             self.assertTrue((pipeline.paths.raw / "train_subset.tar.gz").exists())
+
+    def test_minimum_readable_download_materializes_single_sample_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            extracted_root = Path(source_dir) / "extracted"
+            self._write_extracted_layout(extracted_root)
+            second_root = extracted_root / "outdoor" / "scene_0002" / "scan_0002"
+            second_root.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(np.zeros((6, 8, 3), dtype=np.uint8)).save(second_root / "frame_0002.png")
+            np.save(second_root / "frame_0002_depth.npy", np.ones((6, 8), dtype=np.float32))
+            np.save(second_root / "frame_0002_depth_mask.npy", np.ones((6, 8), dtype=bool))
+
+            archive_path = Path(source_dir) / "train_subset.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                archive.add(extracted_root / "indoors", arcname="train_subset/indoors")
+                archive.add(extracted_root / "outdoor", arcname="train_subset/outdoor")
+            pipeline.dataset_config.options["local_archive_root"] = source_dir
+
+            unit = DIODEArchiveUnit(archive_name="train_subset.tar.gz")
+            pipeline.download_unit(unit)
+
+            with tarfile.open(pipeline.paths.raw / "train_subset.tar.gz", "r:gz") as archive:
+                member_names = sorted(member.name for member in archive if member.isfile())
+            self.assertEqual(
+                member_names,
+                [
+                    "train_subset/indoors/scene_0001/scan_0001/frame_0001.png",
+                    "train_subset/indoors/scene_0001/scan_0001/frame_0001_depth.npy",
+                    "train_subset/indoors/scene_0001/scan_0001/frame_0001_depth_mask.npy",
+                ],
+            )
 
     def test_extract_and_enumerate_source_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
@@ -143,9 +176,9 @@ class DIODEPipelineTest(unittest.TestCase):
             self.assertEqual(sample.provenance["scene_type"], "indoors")
             self.assertEqual(sample.provenance["projection"], "pinhole")
 
-    def test_remote_download_uses_hf_helper(self) -> None:
+    def test_remote_download_uses_hf_helper_for_all_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            pipeline = self._make_pipeline(tmp_dir)
+            pipeline = self._make_pipeline(tmp_dir, selection="all")
             unit = DIODEArchiveUnit(archive_name="train_subset.tar.gz")
             downloaded_archive = pipeline.paths.raw / "cache" / "train_subset.tar.gz"
             downloaded_archive.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +188,28 @@ class DIODEPipelineTest(unittest.TestCase):
                 pipeline.download_unit(unit)
             download_mock.assert_called_once()
             self.assertEqual(download_mock.call_args.kwargs["filename"], "train_subset.tar.gz")
+
+    def test_minimum_readable_remote_download_uses_streaming_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as source_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            extracted_root = Path(source_dir) / "extracted"
+            self._write_extracted_layout(extracted_root)
+            archive_path = Path(source_dir) / "train_subset.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                archive.add(extracted_root / "indoors", arcname="train_subset/indoors")
+            archive_bytes = archive_path.read_bytes()
+
+            class _RemoteBytes(io.BytesIO):
+                def __enter__(self) -> "_RemoteBytes":
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> None:
+                    self.close()
+
+            unit = DIODEArchiveUnit(archive_name="train_subset.tar.gz")
+            with patch.object(pipeline, "hf_open_remote_file", return_value=_RemoteBytes(archive_bytes)) as open_mock:
+                pipeline.download_unit(unit)
+            open_mock.assert_called_once()
 
     def test_run_writes_real_shard_and_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -11,9 +11,25 @@ from typing import Sequence
 
 from tqdm.auto import tqdm
 
-from depth_collector.app import list_project_configs, load_enabled_pipelines, resolve_project_config_path
 from depth_collector.config import load_config
-from depth_collector.visualization import create_contact_sheet, load_processed_samples
+
+
+def _resolve_project_config_path(project_or_path: str) -> Path:
+    from depth_collector.app import resolve_project_config_path
+
+    return resolve_project_config_path(project_or_path)
+
+
+def _load_enabled_pipelines(config_path: str) -> list[object]:
+    from depth_collector.app import load_enabled_pipelines
+
+    return load_enabled_pipelines(config_path)
+
+
+def _list_project_configs() -> list[tuple[str, Path]]:
+    from depth_collector.app import list_project_configs
+
+    return list_project_configs()
 
 
 def _count_files(root: Path | None) -> int:
@@ -44,7 +60,7 @@ def _resolve_config_path(args: argparse.Namespace) -> Path:
     if getattr(args, "config", None):
         return Path(args.config)
     project = getattr(args, "project", None) or "default"
-    return resolve_project_config_path(project)
+    return _resolve_project_config_path(project)
 
 
 def _count_already_processed(pipeline: object, selected_items: list[object]) -> int:
@@ -206,7 +222,7 @@ def _pipeline_operation_error(
 
 
 def cmd_download(args: argparse.Namespace) -> int:
-    for pipeline in load_enabled_pipelines(str(_resolve_config_path(args))):
+    for pipeline in _load_enabled_pipelines(str(_resolve_config_path(args))):
         try:
             pipeline.prepare_directories()
             selected_units = pipeline.get_selected_download_units()
@@ -258,7 +274,7 @@ def cmd_download(args: argparse.Namespace) -> int:
 def cmd_extract(args: argparse.Namespace) -> int:
     remove_archives = not getattr(args, "keep_archives", False)
     remove_cache = not getattr(args, "keep_cache", False)
-    for pipeline in load_enabled_pipelines(str(_resolve_config_path(args))):
+    for pipeline in _load_enabled_pipelines(str(_resolve_config_path(args))):
         try:
             pipeline.prepare_directories()
             extraction_units = list(pipeline.enumerate_extraction_units())
@@ -307,7 +323,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 
 def cmd_process(args: argparse.Namespace) -> int:
-    for pipeline in load_enabled_pipelines(str(_resolve_config_path(args))):
+    for pipeline in _load_enabled_pipelines(str(_resolve_config_path(args))):
         pipeline.verbose = bool(getattr(args, "verbose", False))
         pipeline.prepare_directories()
         _reconcile_processing_state(pipeline)
@@ -369,7 +385,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"project: {config.project.name}")
     print(f"config: {config_path}")
     print(f"data_root: {Path(config.output.root_data_dir) / config.project.name}")
-    for pipeline in load_enabled_pipelines(str(config_path)):
+    for pipeline in _load_enabled_pipelines(str(config_path)):
         artifacts = list(pipeline.iter_download_artifact_paths())
         artifact_count = sum(1 for path in artifacts if path.exists())
         extraction_units = list(pipeline.enumerate_extraction_units())
@@ -417,7 +433,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
 def cmd_clean_process(args: argparse.Namespace) -> int:
     if not args.yes:
         raise SystemExit("refusing to remove process artifacts without --yes")
-    for pipeline in load_enabled_pipelines(str(_resolve_config_path(args))):
+    for pipeline in _load_enabled_pipelines(str(_resolve_config_path(args))):
         removed_any = False
         if pipeline.paths.processed.exists():
             shutil.rmtree(pipeline.paths.processed)
@@ -451,13 +467,15 @@ def cmd_clean_process(args: argparse.Namespace) -> int:
 
 
 def cmd_visualize(args: argparse.Namespace) -> int:
+    from depth_collector.visualization import create_contact_sheet, load_processed_samples
+
     if args.all and args.max_samples is not None:
         raise SystemExit("use either --all or --max-samples, not both")
     max_samples = None if args.all else int(args.max_samples or 24)
     samples_per_image = int(args.samples_per_image)
     sample_columns = int(args.sample_columns)
     dataset_filter = getattr(args, "dataset", None)
-    pipelines = load_enabled_pipelines(str(_resolve_config_path(args)))
+    pipelines = _load_enabled_pipelines(str(_resolve_config_path(args)))
     if dataset_filter:
         pipelines = [pipeline for pipeline in pipelines if pipeline.dataset_name == dataset_filter]
         if not pipelines:
@@ -557,7 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_projects(args: argparse.Namespace) -> int:
     del args
-    for project_name, path in list_project_configs():
+    for project_name, path in _list_project_configs():
         print(f"{project_name}: {path}")
     return 0
 
@@ -566,3 +584,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

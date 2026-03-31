@@ -17,7 +17,7 @@ class ToF360PipelineTest(unittest.TestCase):
     def _make_config(
         self,
         root_data_dir: str,
-        scene_count: int = 1,
+        selection: object = "minimum_readable",
         process_ratio: float = 1.0,
     ) -> dict[str, object]:
         return {
@@ -47,8 +47,8 @@ class ToF360PipelineTest(unittest.TestCase):
                 "tof_360": {
                     "enabled": True,
                     "hf_dataset_id": "COLE-Ricoh/ToF-360",
+                    "selection": selection,
                     "scenes": "*",
-                    "scene_count": scene_count,
                     "rgb_dir": "rgb",
                     "depth_dir": "depth",
                     "depth_scale_divisor": 512.0,

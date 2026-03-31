@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import csv
+import io
 import json
 from pathlib import Path
 import re
@@ -51,6 +52,7 @@ class HypersimPipeline(DatasetPipeline):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._written_shards: list[dict[str, object]] = []
+        self._minimum_readable_manifest_cache: dict[str, dict[str, str]] | None = None
 
     def _selected_scenes(self) -> list[str]:
         configured = self.dataset_config.options.get("scenes")
@@ -73,13 +75,7 @@ class HypersimPipeline(DatasetPipeline):
             bad_scenes = {str(scene) for scene in bad_scenes_config}
         if bad_scenes:
             scenes = [scene for scene in scenes if scene not in bad_scenes]
-        count = self.dataset_config.options.get("scene_count")
-        if count is None:
-            return scenes
-        scene_count = int(count)
-        if scene_count < 1:
-            raise ValueError("scene_count must be at least 1")
-        return scenes[: min(scene_count, len(scenes))]
+        return [str(scene) for scene in self.apply_dataset_selection(scenes)]
 
     def _discover_all_scenes(self) -> list[str]:
         archive_scenes = sorted(path.stem for path in self.paths.raw.glob("ai_*_*.zip"))
@@ -118,6 +114,12 @@ class HypersimPipeline(DatasetPipeline):
             yield HypersimSceneUnit(scene_name=scene_name)
 
     def download_unit(self, unit: HypersimSceneUnit) -> None:
+        if self.dataset_selection() == self.MINIMUM_READABLE_SELECTION:
+            if self._download_mode() == "directory":
+                self._download_minimum_readable_scene_directory(unit)
+                return
+            self._download_minimum_readable_scene_archive(unit)
+            return
         if self._download_mode() == "directory":
             self._download_scene_directory_from_hub(unit)
             return
@@ -229,7 +231,7 @@ class HypersimPipeline(DatasetPipeline):
         position_path = scene_root / "_detail" / item.camera_name / "camera_keyframe_positions.hdf5"
         orientations = self._load_hdf5_array(orientation_path)
         camera_positions_asset = self._load_hdf5_array(position_path)
-        frame_index = int(item.frame_id.split(".")[1])
+        frame_index = self._load_frame_index(item.scene_name, item.camera_name, item.frame_id)
         orientation_world_from_camera = np.asarray(orientations[frame_index], dtype=np.float32)
         camera_position_asset = np.asarray(camera_positions_asset[frame_index], dtype=np.float32)
         camera_parameters = self._load_camera_parameters(item.scene_name)
@@ -430,6 +432,285 @@ class HypersimPipeline(DatasetPipeline):
             local_dir=self.paths.raw,
         )
 
+    def _download_minimum_readable_scene_archive(self, unit: HypersimSceneUnit) -> None:
+        archive_path = self._archive_path(unit)
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if local_archive_root:
+            source_path = Path(str(local_archive_root)) / unit.filename
+            if not source_path.exists():
+                raise FileNotFoundError(f"missing local archive source: {source_path}")
+            with zipfile.ZipFile(source_path) as archive:
+                self._write_minimum_readable_archive_from_zip(archive, unit, archive_path)
+            return
+        with self.hf_open_remote_zip(
+            repo_id=self.dataset_config.hf_dataset_id,
+            filename="/".join(part for part in (str(self.dataset_config.options.get("hf_path_prefix", "")).strip("/"), unit.filename) if part),
+            repo_type="dataset",
+            revision=self.dataset_config.revision,
+        ) as archive:
+            self._write_minimum_readable_archive_from_zip(archive, unit, archive_path)
+
+    def _download_minimum_readable_scene_directory(self, unit: HypersimSceneUnit) -> None:
+        local_archive_root = self.dataset_config.options.get("local_archive_root")
+        if local_archive_root:
+            local_root = Path(str(local_archive_root))
+            source_scene_root = local_root / unit.scene_name
+            if not source_scene_root.exists():
+                raise FileNotFoundError(f"missing local scene source: {source_scene_root}")
+            self._materialize_minimum_readable_scene_from_directory(local_root, unit.scene_name)
+            return
+
+        selection = self._select_minimum_readable_remote_sample(unit.scene_name)
+        for repo_path in selection["repo_paths"].values():
+            downloaded_path = self.hf_hub_download(
+                repo_id=self.dataset_config.hf_dataset_id,
+                repo_type="dataset",
+                filename=repo_path,
+                revision=self.dataset_config.revision,
+                local_dir=self.paths.raw,
+            )
+            relative_path = self._relative_hypersim_repo_path(str(repo_path))
+            destination_path = self.paths.raw / relative_path
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            downloaded_path = Path(downloaded_path)
+            if downloaded_path.resolve() != destination_path.resolve():
+                shutil.copy2(downloaded_path, destination_path)
+        self._postprocess_minimum_readable_scene(
+            scene_name=unit.scene_name,
+            camera_name=str(selection["camera_name"]),
+            frame_id=str(selection["frame_id"]),
+        )
+
+    def _select_minimum_readable_remote_sample(self, scene_name: str) -> dict[str, object]:
+        manifest = self._minimum_readable_manifest()
+        selection = manifest.get(scene_name)
+        if selection is None:
+            raise ValueError(f"could not find a minimum readable Hypersim sample for scene {scene_name}")
+        return {
+            "camera_name": selection["camera_name"],
+            "frame_id": selection["frame_id"],
+            "repo_paths": {
+                "color": selection["color_repo_path"],
+                "depth": selection["depth_repo_path"],
+                "depth_plane": selection["depth_plane_repo_path"],
+                "orientation": selection["orientation_repo_path"],
+                "position": selection["position_repo_path"],
+                "metadata_scene": selection["metadata_scene_repo_path"],
+                "metadata_camera": selection["metadata_camera_repo_path"],
+            },
+        }
+
+    def _minimum_readable_manifest_path(self) -> Path:
+        return self.paths.state / "minimum_readable_manifest.json"
+
+    def _minimum_readable_manifest(self) -> dict[str, dict[str, str]]:
+        if self._minimum_readable_manifest_cache is not None:
+            return self._minimum_readable_manifest_cache
+        manifest_path = self._minimum_readable_manifest_path()
+        if manifest_path.exists():
+            payload = json.loads(manifest_path.read_text())
+            self._minimum_readable_manifest_cache = {
+                str(scene_name): {str(key): str(value) for key, value in entry.items()}
+                for scene_name, entry in payload.items()
+            }
+            return self._minimum_readable_manifest_cache
+        manifest = self._build_minimum_readable_manifest()
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2))
+        self._minimum_readable_manifest_cache = manifest
+        return manifest
+
+    def _build_minimum_readable_manifest(self) -> dict[str, dict[str, str]]:
+        prefix = str(self.dataset_config.options.get("hf_path_prefix", "")).strip("/")
+        repo_files = self.hf_list_repo_files(repo_id=self.dataset_config.hf_dataset_id, repo_type="dataset")
+        file_set = set(repo_files)
+        metadata_camera_repo_path = "/".join(part for part in (prefix, "metadata_camera_parameters.csv") if part)
+        manifest: dict[str, dict[str, str]] = {}
+        color_paths = sorted(
+            repo_path
+            for repo_path in repo_files
+            if repo_path.endswith(self.COLOR_SUFFIX) and "/images/scene_cam_" in repo_path
+        )
+        for color_repo_path in color_paths:
+            relative_color_path = self._relative_hypersim_repo_path(color_repo_path)
+            color_path = Path(relative_color_path)
+            if len(color_path.parts) < 3:
+                continue
+            scene_name = color_path.parts[0]
+            if scene_name in manifest:
+                continue
+            camera_name = color_path.parent.name.removeprefix("scene_").removesuffix("_final_preview")
+            frame_id = self._frame_id_from_name(color_path.name)
+            scene_prefix = "/".join(part for part in (prefix, scene_name) if part)
+            depth_repo_path = f"{scene_prefix}/images/scene_{camera_name}_geometry_hdf5/{frame_id}{self.DEPTH_SUFFIX}"
+            depth_plane_repo_path = f"{scene_prefix}/images/scene_{camera_name}_geometry_hdf5/{frame_id}{self.DEPTH_PLANE_SUFFIX}"
+            orientation_repo_path = f"{scene_prefix}/_detail/{camera_name}/camera_keyframe_orientations.hdf5"
+            position_repo_path = f"{scene_prefix}/_detail/{camera_name}/camera_keyframe_positions.hdf5"
+            metadata_scene_repo_path = f"{scene_prefix}/_detail/metadata_scene.csv"
+            required = {
+                color_repo_path,
+                depth_repo_path,
+                depth_plane_repo_path,
+                orientation_repo_path,
+                position_repo_path,
+                metadata_scene_repo_path,
+                metadata_camera_repo_path,
+            }
+            if not required.issubset(file_set):
+                continue
+            manifest[scene_name] = {
+                "camera_name": camera_name,
+                "frame_id": frame_id,
+                "color_repo_path": color_repo_path,
+                "depth_repo_path": depth_repo_path,
+                "depth_plane_repo_path": depth_plane_repo_path,
+                "orientation_repo_path": orientation_repo_path,
+                "position_repo_path": position_repo_path,
+                "metadata_scene_repo_path": metadata_scene_repo_path,
+                "metadata_camera_repo_path": metadata_camera_repo_path,
+            }
+        return manifest
+
+    def _relative_hypersim_repo_path(self, repo_path: str) -> Path:
+        prefix = str(self.dataset_config.options.get("hf_path_prefix", "")).strip("/")
+        path = Path(repo_path)
+        if prefix:
+            prefix_parts = Path(prefix).parts
+            if path.parts[: len(prefix_parts)] == prefix_parts:
+                path = Path(*path.parts[len(prefix_parts) :])
+        return path
+
+    def _materialize_minimum_readable_scene_from_directory(self, local_root: Path, scene_name: str) -> None:
+        selection = self._select_minimum_readable_local_sample(local_root, scene_name)
+        scene_root = self._scene_root(scene_name)
+        scene_root.mkdir(parents=True, exist_ok=True)
+        for relative_path in selection["relative_paths"]:
+            src = local_root / str(relative_path)
+            dst = self.paths.raw / str(relative_path)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        metadata_camera_source = Path(str(selection["metadata_camera_source"]))
+        self._rewrite_metadata_camera_parameters(metadata_camera_source, scene_name)
+        self._postprocess_minimum_readable_scene(
+            scene_name=scene_name,
+            camera_name=str(selection["camera_name"]),
+            frame_id=str(selection["frame_id"]),
+        )
+
+    def _select_minimum_readable_local_sample(self, local_root: Path, scene_name: str) -> dict[str, object]:
+        scene_root = local_root / scene_name
+        color_paths = sorted(scene_root.glob(f"images/scene_cam_*_final_preview/*{self.COLOR_SUFFIX}"))
+        for color_path in color_paths:
+            camera_name = color_path.parent.name.removeprefix("scene_").removesuffix("_final_preview")
+            frame_id = self._frame_id_from_name(color_path.name)
+            depth_path = scene_root / "images" / f"scene_{camera_name}_geometry_hdf5" / f"{frame_id}{self.DEPTH_SUFFIX}"
+            depth_plane_path = (
+                scene_root / "images" / f"scene_{camera_name}_geometry_hdf5" / f"{frame_id}{self.DEPTH_PLANE_SUFFIX}"
+            )
+            orientation_path = scene_root / "_detail" / camera_name / "camera_keyframe_orientations.hdf5"
+            position_path = scene_root / "_detail" / camera_name / "camera_keyframe_positions.hdf5"
+            metadata_scene_path = scene_root / "_detail" / "metadata_scene.csv"
+            metadata_camera_source = local_root / "metadata_camera_parameters.csv"
+            required_paths = [
+                color_path,
+                depth_path,
+                depth_plane_path,
+                orientation_path,
+                position_path,
+                metadata_scene_path,
+                metadata_camera_source,
+            ]
+            if all(path.exists() for path in required_paths):
+                relative_paths = [
+                    color_path.relative_to(local_root),
+                    depth_path.relative_to(local_root),
+                    depth_plane_path.relative_to(local_root),
+                    orientation_path.relative_to(local_root),
+                    position_path.relative_to(local_root),
+                    metadata_scene_path.relative_to(local_root),
+                ]
+                return {
+                    "camera_name": camera_name,
+                    "frame_id": frame_id,
+                    "relative_paths": relative_paths,
+                    "metadata_camera_source": metadata_camera_source,
+                }
+        raise ValueError(f"could not find a minimum readable Hypersim sample for scene {scene_name}")
+
+    def _write_minimum_readable_archive_from_zip(
+        self,
+        archive: zipfile.ZipFile,
+        unit: HypersimSceneUnit,
+        target_path: Path,
+    ) -> None:
+        selection = self._select_minimum_readable_zip_sample(archive, unit.scene_name)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target_path, "w") as output_archive:
+            for name in selection["copy_names"]:
+                output_archive.writestr(name, archive.read(name))
+            camera_name = str(selection["camera_name"])
+            frame_id = str(selection["frame_id"])
+            frame_index = int(frame_id.split(".")[1])
+            orientation_name = f"{unit.scene_name}/_detail/{camera_name}/camera_keyframe_orientations.hdf5"
+            position_name = f"{unit.scene_name}/_detail/{camera_name}/camera_keyframe_positions.hdf5"
+            output_archive.writestr(
+                orientation_name,
+                self._slice_hdf5_bytes(archive.read(orientation_name), frame_index),
+            )
+            output_archive.writestr(
+                position_name,
+                self._slice_hdf5_bytes(archive.read(position_name), frame_index),
+            )
+            output_archive.writestr(
+                f"{unit.scene_name}/_detail/{camera_name}/frame_index_map.json",
+                json.dumps({frame_id: 0}, sort_keys=True).encode("utf-8"),
+            )
+            metadata_camera_name = "metadata_camera_parameters.csv"
+            output_archive.writestr(
+                metadata_camera_name,
+                self._filter_metadata_camera_parameters_bytes(archive.read(metadata_camera_name), unit.scene_name),
+            )
+
+    def _select_minimum_readable_zip_sample(self, archive: zipfile.ZipFile, scene_name: str) -> dict[str, object]:
+        names = set(archive.namelist())
+        color_names = sorted(
+            name
+            for name in names
+            if name.startswith(f"{scene_name}/images/scene_cam_") and name.endswith(self.COLOR_SUFFIX)
+        )
+        for color_name in color_names:
+            color_path = Path(color_name)
+            camera_name = color_path.parent.name.removeprefix("scene_").removesuffix("_final_preview")
+            frame_id = self._frame_id_from_name(color_path.name)
+            depth_name = f"{scene_name}/images/scene_{camera_name}_geometry_hdf5/{frame_id}{self.DEPTH_SUFFIX}"
+            depth_plane_name = f"{scene_name}/images/scene_{camera_name}_geometry_hdf5/{frame_id}{self.DEPTH_PLANE_SUFFIX}"
+            orientation_name = f"{scene_name}/_detail/{camera_name}/camera_keyframe_orientations.hdf5"
+            position_name = f"{scene_name}/_detail/{camera_name}/camera_keyframe_positions.hdf5"
+            metadata_scene_name = f"{scene_name}/_detail/metadata_scene.csv"
+            metadata_camera_name = "metadata_camera_parameters.csv"
+            required = {
+                color_name,
+                depth_name,
+                depth_plane_name,
+                orientation_name,
+                position_name,
+                metadata_scene_name,
+                metadata_camera_name,
+            }
+            if required.issubset(names):
+                return {
+                    "camera_name": camera_name,
+                    "frame_id": frame_id,
+                    "copy_names": [
+                        color_name,
+                        depth_name,
+                        depth_plane_name,
+                        metadata_scene_name,
+                    ],
+                }
+        raise ValueError(f"could not find a minimum readable Hypersim sample for scene {scene_name}")
+
     def _download_scene_directory_from_hub(self, unit: HypersimSceneUnit) -> None:
         local_archive_root = self.dataset_config.options.get("local_archive_root")
         if local_archive_root:
@@ -451,6 +732,67 @@ class HypersimPipeline(DatasetPipeline):
             ],
             tqdm_class=_SilentTqdm,
         )
+
+    def _postprocess_minimum_readable_scene(self, *, scene_name: str, camera_name: str, frame_id: str) -> None:
+        scene_root = self._scene_root(scene_name)
+        detail_camera_root = scene_root / "_detail" / camera_name
+        frame_index = int(frame_id.split(".")[1])
+        self._rewrite_hdf5_in_place(detail_camera_root / "camera_keyframe_orientations.hdf5", frame_index)
+        self._rewrite_hdf5_in_place(detail_camera_root / "camera_keyframe_positions.hdf5", frame_index)
+        (detail_camera_root / "frame_index_map.json").write_text(json.dumps({frame_id: 0}, sort_keys=True))
+        self._rewrite_metadata_camera_parameters(self.paths.raw / "metadata_camera_parameters.csv", scene_name)
+
+    def _rewrite_hdf5_in_place(self, path: Path, frame_index: int) -> None:
+        array = self._load_hdf5_array(path)
+        if frame_index >= array.shape[0]:
+            raise ValueError(f"Hypersim frame index {frame_index} exceeds metadata length in {path}")
+        self._write_hdf5_dataset(path, np.asarray(array[frame_index : frame_index + 1]))
+
+    def _write_hdf5_dataset(self, path: Path, array: np.ndarray) -> None:
+        import h5py
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with h5py.File(path, "w") as handle:
+            handle.create_dataset("dataset", data=array)
+
+    def _slice_hdf5_bytes(self, payload: bytes, frame_index: int) -> bytes:
+        import h5py
+
+        source = io.BytesIO(payload)
+        target = io.BytesIO()
+        with h5py.File(source, "r") as input_handle:
+            key = next(iter(input_handle.keys()))
+            array = np.asarray(input_handle[key])
+        if frame_index >= array.shape[0]:
+            raise ValueError(f"Hypersim frame index {frame_index} exceeds metadata length")
+        with h5py.File(target, "w") as output_handle:
+            output_handle.create_dataset("dataset", data=np.asarray(array[frame_index : frame_index + 1]))
+        return target.getvalue()
+
+    def _filter_metadata_camera_parameters_bytes(self, payload: bytes, scene_name: str) -> bytes:
+        text = payload.decode("utf-8")
+        rows = list(csv.DictReader(io.StringIO(text)))
+        filtered_rows = [row for row in rows if row.get("scene_name") == scene_name]
+        if not filtered_rows:
+            raise ValueError(f"could not find Hypersim camera parameters row for scene {scene_name}")
+        fieldnames = list(filtered_rows[0].keys())
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(filtered_rows)
+        return buffer.getvalue().encode("utf-8")
+
+    def _rewrite_metadata_camera_parameters(self, source_path: Path, scene_name: str) -> None:
+        self.paths.raw.mkdir(parents=True, exist_ok=True)
+        filtered = self._filter_metadata_camera_parameters_bytes(source_path.read_bytes(), scene_name)
+        (self.paths.raw / "metadata_camera_parameters.csv").write_bytes(filtered)
+
+    def _load_frame_index(self, scene_name: str, camera_name: str, frame_id: str) -> int:
+        frame_index_map_path = self._scene_root(scene_name) / "_detail" / camera_name / "frame_index_map.json"
+        if not frame_index_map_path.exists():
+            return int(frame_id.split(".")[1])
+        payload = json.loads(frame_index_map_path.read_text())
+        return int(payload.get(frame_id, int(frame_id.split(".")[1])))
 
     def get_download_progress_plan(self, unit: object) -> dict[str, object] | None:
         if self._download_mode() != "directory":

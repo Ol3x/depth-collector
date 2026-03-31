@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import math
 import os
@@ -13,6 +14,7 @@ import sys
 import time
 import traceback
 from typing import Iterable, Iterator
+import zipfile
 
 from tqdm.auto import tqdm
 
@@ -29,8 +31,158 @@ from depth_collector.validation.metrics import summarize_metrics
 from depth_collector.validation.validator import CanonicalSampleValidator
 
 
+class _HTTPRangeReader(io.RawIOBase):
+    def __init__(
+        self,
+        *,
+        client: object,
+        url: str,
+        headers: dict[str, str],
+        size: int,
+        block_size: int = 1 << 20,
+    ) -> None:
+        self._client = client
+        self._url = url
+        self._headers = dict(headers)
+        self._size = int(size)
+        self._block_size = int(block_size)
+        self._position = 0
+        self._blocks: dict[int, bytes] = {}
+        self._closed = False
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        self._closed = True
+        super().close()
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_SET:
+            position = offset
+        elif whence == io.SEEK_CUR:
+            position = self._position + offset
+        elif whence == io.SEEK_END:
+            position = self._size + offset
+        else:
+            raise ValueError(f"unsupported seek whence: {whence}")
+        if position < 0:
+            raise ValueError("negative seek position")
+        self._position = min(position, self._size)
+        return self._position
+
+    def read(self, size: int = -1) -> bytes:
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+        if self._position >= self._size:
+            return b""
+        if size is None or size < 0:
+            end = self._size
+        else:
+            end = min(self._size, self._position + size)
+        chunks: list[bytes] = []
+        while self._position < end:
+            block_index = self._position // self._block_size
+            block = self._load_block(block_index)
+            block_start = block_index * self._block_size
+            offset = self._position - block_start
+            take = min(len(block) - offset, end - self._position)
+            chunks.append(block[offset : offset + take])
+            self._position += take
+        return b"".join(chunks)
+
+    def readinto(self, buffer: bytearray | memoryview) -> int:
+        data = self.read(len(buffer))
+        size = len(data)
+        buffer[:size] = data
+        return size
+
+    def _load_block(self, block_index: int) -> bytes:
+        cached = self._blocks.get(block_index)
+        if cached is not None:
+            return cached
+        start = block_index * self._block_size
+        end = min(self._size - 1, start + self._block_size - 1)
+        headers = dict(self._headers)
+        headers["Range"] = f"bytes={start}-{end}"
+        response = self._client.get(self._url, headers=headers, follow_redirects=True)
+        response.raise_for_status()
+        block = bytes(response.content)
+        expected_size = end - start + 1
+        if len(block) > expected_size:
+            block = block[:expected_size]
+        if len(block) != expected_size:
+            raise IOError(
+                f"unexpected range read size for {self._url}: expected {expected_size} bytes, got {len(block)}"
+            )
+        self._blocks[block_index] = block
+        return block
+
+
+class _HTTPStreamReader(io.RawIOBase):
+    def __init__(self, response: object) -> None:
+        self._response = response
+        iter_raw = getattr(response, "iter_raw", None)
+        if callable(iter_raw):
+            self._iterator = iter(iter_raw())
+        else:
+            self._iterator = iter(response.iter_bytes())  # type: ignore[attr-defined]
+        self._buffer = bytearray()
+        self._closed = False
+
+    def readable(self) -> bool:
+        return True
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        self._closed = True
+        close = getattr(self._response, "close", None)
+        if callable(close):
+            close()
+        super().close()
+
+    def read(self, size: int = -1) -> bytes:
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+        if size is None or size < 0:
+            chunks = [bytes(self._buffer)]
+            self._buffer.clear()
+            chunks.extend(self._iterator)
+            return b"".join(chunks)
+        while len(self._buffer) < size:
+            try:
+                self._buffer.extend(next(self._iterator))
+            except StopIteration:
+                break
+        data = bytes(self._buffer[:size])
+        del self._buffer[:size]
+        return data
+
+    def readinto(self, buffer: bytearray | memoryview) -> int:
+        data = self.read(len(buffer))
+        size = len(data)
+        buffer[:size] = data
+        return size
+
+
 class DatasetPipeline(ABC):
     """Shared lifecycle for dataset-specific processing."""
+
+    MINIMUM_READABLE_SELECTION = "minimum_readable"
+    ALL_SELECTION = "all"
 
     def __init__(self, config: RootConfig, dataset_name: str) -> None:
         self.config = config
@@ -79,6 +231,32 @@ class DatasetPipeline(ABC):
 
     def scale_group_name(self) -> str:
         return "metric" if self.is_metric_scale() else "relative"
+
+    def dataset_selection(self) -> str | float:
+        selection = self.dataset_config.options.get("selection")
+        if isinstance(selection, str):
+            normalized = selection.strip().lower()
+            if normalized in {self.MINIMUM_READABLE_SELECTION, self.ALL_SELECTION}:
+                return normalized
+        elif isinstance(selection, (int, float)) and not isinstance(selection, bool):
+            ratio = float(selection)
+            if 0.0 < ratio <= 1.0:
+                return ratio
+        raise ValueError(
+            f"datasets.{self.dataset_name}.selection must be "
+            f"{self.MINIMUM_READABLE_SELECTION!r}, {self.ALL_SELECTION!r}, or a float in (0, 1]"
+        )
+
+    def apply_dataset_selection(self, candidates: list[object]) -> list[object]:
+        if not candidates:
+            return candidates
+        selection = self.dataset_selection()
+        if selection == self.ALL_SELECTION:
+            return candidates
+        if selection == self.MINIMUM_READABLE_SELECTION:
+            return candidates[:1]
+        count = max(1, int(math.ceil(len(candidates) * selection)))
+        return candidates[:count]
 
     def _build_paths(self) -> DatasetPaths:
         project_root = Path(self.config.output.root_data_dir) / self.config.project.name
@@ -196,6 +374,69 @@ class DatasetPipeline(ABC):
 
         with self.use_hf_cache():
             return Path(snapshot_download(**kwargs))
+
+    @contextmanager
+    def hf_open_remote_zip(
+        self,
+        *,
+        repo_id: str,
+        filename: str,
+        repo_type: str = "dataset",
+        revision: str | None = None,
+    ) -> Iterator[zipfile.ZipFile]:
+        from huggingface_hub import get_hf_file_metadata, hf_hub_url
+        from huggingface_hub.utils import build_hf_headers, get_session
+
+        with self.use_hf_cache():
+            headers = build_hf_headers()
+            url = hf_hub_url(
+                repo_id=repo_id,
+                filename=filename,
+                repo_type=repo_type,
+                revision=revision,
+            )
+            metadata = get_hf_file_metadata(url, headers=headers)
+            size = getattr(metadata, "size", None)
+            if size is None:
+                raise ValueError(f"could not determine remote size for {filename}")
+            reader = _HTTPRangeReader(
+                client=get_session(),
+                url=url,
+                headers=headers,
+                size=int(size),
+            )
+            with zipfile.ZipFile(reader) as archive:
+                yield archive
+
+    @contextmanager
+    def hf_open_remote_file(
+        self,
+        *,
+        repo_id: str,
+        filename: str,
+        repo_type: str = "dataset",
+        revision: str | None = None,
+    ) -> Iterator[io.BufferedIOBase]:
+        from huggingface_hub import hf_hub_url
+        from huggingface_hub.utils import build_hf_headers, get_session
+
+        with self.use_hf_cache():
+            headers = build_hf_headers()
+            headers["Accept-Encoding"] = "identity"
+            url = hf_hub_url(
+                repo_id=repo_id,
+                filename=filename,
+                repo_type=repo_type,
+                revision=revision,
+            )
+            client = get_session()
+            with client.stream("GET", url, headers=headers, follow_redirects=True) as response:
+                response.raise_for_status()
+                reader = _HTTPStreamReader(response)
+                try:
+                    yield reader
+                finally:
+                    reader.close()
 
     def run_download_stage(self) -> None:
         selected_units = self._iter_selected_download_units()

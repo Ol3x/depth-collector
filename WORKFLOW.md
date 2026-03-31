@@ -151,16 +151,19 @@ This also applies to acquisition:
 
 The runtime distinguishes:
 
-- dataset-specific complete-unit selectors such as `environment_count`, `scene_count`, or `bundle_count`
+- dataset-specific `selection` controls
 - `download_workers`: number of archive downloads to run concurrently
 - `process_ratio`: fraction of extracted source items to process
 
 `download_workers` may be set globally under `runtime` and overridden per dataset under `datasets.<name>.download_workers`.
 
-For count-based download selection:
+For dataset download selection:
 
-- if the requested count would otherwise yield zero useful work, the runtime still selects a minimum of one useful unit when a non-empty candidate list is configured
-- candidate-unit lists may use `"*"` or `"all"` to request all discoverable units, with the matching count key still limiting how many complete units are selected
+- every dataset config must provide `selection`
+- `selection: "minimum_readable"` means the pipeline must select the smallest candidate set that still yields at least one readable `(image, distance, ray_dir)` sample
+- `selection: "all"` means the pipeline must use the full candidate pool
+- a float in `(0, 1]` means the pipeline must use that fraction of the ordered candidate pool, rounded up so a non-empty candidate pool still yields at least one useful unit
+- candidate-unit lists may use `"*"` or `"all"` to request all discoverable units, with `selection` then deciding how much of that pool is used
 
 For tiny successful processing runs:
 
@@ -173,16 +176,16 @@ Current TartanAir behavior:
 - `dc download` expects archive paths like `<environment>/<difficulty>/image_left.zip` and `<environment>/<difficulty>/depth_left.zip`
 - if the dataset repo has an extra leading directory, set `datasets.tartanair.hf_path_prefix`
 - for offline smoke testing, `datasets.tartanair.local_archive_root` can mirror the same archive layout and act as the download source
-- use `datasets.tartanair.environments` to list candidate environments and `datasets.tartanair.environment_count` to choose how many complete Tartan-family slices to download
-- configured difficulties contribute to one shared candidate pool; a tiny count selects the smallest complete RGB+depth slice rather than forcing every configured difficulty for one environment
+- use `datasets.tartanair.environments` to list candidate environments and `datasets.tartanair.selection` to decide whether to keep the minimum readable slice, the whole pool, or a ratio of the pool
+- configured difficulties contribute to one shared candidate pool; `"minimum_readable"` selects the first complete RGB+depth slice rather than forcing every configured difficulty for one environment
 
 Current TartanGround behavior:
 
 - `dc download` expects archive paths like `<environment>/Data_<version>/<trajectory>/image_<camera>.zip` and `depth_<camera>.zip`
 - the default config enables `tartanground` with a minimal `AbandonedCable / omni / P0000 / lcam_front` selection
 - `TartanGroundPipeline` should reuse shared Tartan-family geometry, validation, and sharding logic rather than reimplementing TartanAir internals
-- use `datasets.tartanground.environments` to list candidate environments and `datasets.tartanground.environment_count` to choose how many complete Tartan-family slices to download
-- configured versions, trajectories, and camera names contribute to one shared candidate pool; a tiny count selects the smallest complete RGB+depth slice rather than forcing every configured variation for one environment
+- use `datasets.tartanground.environments` to list candidate environments and `datasets.tartanground.selection` to decide whether to keep the minimum readable slice, the whole pool, or a ratio of the pool
+- configured versions, trajectories, and camera names contribute to one shared candidate pool; `"minimum_readable"` selects the first complete RGB+depth slice rather than forcing every configured variation for one environment
 
 Current Hypersim behavior:
 
@@ -190,14 +193,14 @@ Current Hypersim behavior:
 - extraction expects the original scene-style layout with `_detail/` camera metadata and `images/scene_<camera>_*_hdf5/` frame files
 - the pipeline uses scene `meters_per_asset_unit`, per-camera keyframe positions and orientations, `position.hdf5`, and `depth_meters.hdf5` to derive canonical `ray_dir` and distance
 - Hypersim stays disabled by default in `configs/default.json` until the gated HF packaging is exercised more broadly
-- use `datasets.hypersim.scenes` to list candidate scenes and `datasets.hypersim.scene_count` to choose how many complete scenes to download
+- use `datasets.hypersim.scenes` to list candidate scenes and `datasets.hypersim.selection` to choose the minimum readable subset, full set, or a ratio of scenes
 
 Current MegaDepth behavior:
 
 - the current initial pipeline is non-metric, so it belongs under `relative/`
 - non-metric MegaDepth exports normalize radial distance into `[0, 1]`
 - `distance = 1` acts as the far / max bucket
-- use `datasets.megadepth.bundles` to list candidate bundles and `datasets.megadepth.bundle_count` to choose how many complete bundles to download
+- use `datasets.megadepth.bundles` to list candidate bundles and `datasets.megadepth.selection` to choose the minimum readable subset, full set, or a ratio of bundles
 
 Implementation note:
 

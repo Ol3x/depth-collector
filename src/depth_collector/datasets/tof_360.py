@@ -91,13 +91,7 @@ class ToF360Pipeline(DatasetPipeline):
                 scenes = self._discover_scene_names_from_root(self.paths.raw)
             if not scenes:
                 scenes = self._discover_scene_names_from_remote()
-        count = self.dataset_config.options.get("scene_count")
-        if count is None:
-            return scenes
-        scene_count = int(count)
-        if scene_count < 1:
-            raise ValueError("scene_count must be at least 1")
-        return scenes[: min(scene_count, len(scenes))]
+        return [str(scene_name) for scene_name in self.apply_dataset_selection(scenes)]
 
     def _rgb_dir_name(self) -> str:
         return str(self.dataset_config.options.get("rgb_dir", "rgb"))

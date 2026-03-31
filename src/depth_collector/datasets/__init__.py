@@ -1,37 +1,27 @@
 """Dataset-specific pipeline implementations live here."""
 
-from .diode import DIODEPipeline
-from .hypersim import HypersimPipeline
-from .megadepth import MegaDepthPipeline
-from .tartan import TartanPipeline
-from .tartanair import TartanAirPipeline
-from .tartanground import TartanGroundPipeline
-from .topair import TopAirPipeline
-from .tof_360 import ToF360Pipeline
-from .urbansyn import UrbanSynPipeline
-from .virtual_kitti_2 import VirtualKITTI2Pipeline
-from .wmg_stereo import WMGStereoPipeline
-from .wmg_stereo_flying import WMGStereoFlyingPipeline
-from .wmg_stereo_indoor import WMGStereoIndoorPipeline
-from .wmg_stereo_nature import WMGStereoNaturePipeline
+from __future__ import annotations
 
-PIPELINE_TYPES = {
-    "hypersim": HypersimPipeline,
-    "megadepth": MegaDepthPipeline,
-    "diode_subset_train": DIODEPipeline,
-    "tartanair": TartanAirPipeline,
-    "tartanground": TartanGroundPipeline,
-    "topair": TopAirPipeline,
-    "tof_360": ToF360Pipeline,
-    "urbansyn": UrbanSynPipeline,
-    "virtual_kitti_2": VirtualKITTI2Pipeline,
-    "wmg_stereo_flying": WMGStereoFlyingPipeline,
-    "wmg_stereo_indoor": WMGStereoIndoorPipeline,
-    "wmg_stereo_nature": WMGStereoNaturePipeline,
+from importlib import import_module
+
+_EXPORT_PATHS = {
+    "DIODEPipeline": "depth_collector.datasets.diode:DIODEPipeline",
+    "HypersimPipeline": "depth_collector.datasets.hypersim:HypersimPipeline",
+    "MegaDepthPipeline": "depth_collector.datasets.megadepth:MegaDepthPipeline",
+    "TartanPipeline": "depth_collector.datasets.tartan:TartanPipeline",
+    "TartanAirPipeline": "depth_collector.datasets.tartanair:TartanAirPipeline",
+    "TartanGroundPipeline": "depth_collector.datasets.tartanground:TartanGroundPipeline",
+    "TopAirPipeline": "depth_collector.datasets.topair:TopAirPipeline",
+    "ToF360Pipeline": "depth_collector.datasets.tof_360:ToF360Pipeline",
+    "UrbanSynPipeline": "depth_collector.datasets.urbansyn:UrbanSynPipeline",
+    "VirtualKITTI2Pipeline": "depth_collector.datasets.virtual_kitti_2:VirtualKITTI2Pipeline",
+    "WMGStereoPipeline": "depth_collector.datasets.wmg_stereo:WMGStereoPipeline",
+    "WMGStereoFlyingPipeline": "depth_collector.datasets.wmg_stereo_flying:WMGStereoFlyingPipeline",
+    "WMGStereoIndoorPipeline": "depth_collector.datasets.wmg_stereo_indoor:WMGStereoIndoorPipeline",
+    "WMGStereoNaturePipeline": "depth_collector.datasets.wmg_stereo_nature:WMGStereoNaturePipeline",
 }
 
 __all__ = [
-    "PIPELINE_TYPES",
     "DIODEPipeline",
     "HypersimPipeline",
     "MegaDepthPipeline",
@@ -47,3 +37,14 @@ __all__ = [
     "WMGStereoIndoorPipeline",
     "WMGStereoNaturePipeline",
 ]
+
+
+def __getattr__(name: str) -> object:
+    target = _EXPORT_PATHS.get(name)
+    if target is None:
+        raise AttributeError(name)
+    module_name, _, attr_name = target.partition(":")
+    module = import_module(module_name)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value

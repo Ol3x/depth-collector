@@ -50,7 +50,6 @@ This section should control execution behavior.
 
 Likely fields:
 
-- dataset-specific complete-unit count keys such as `environment_count`, `scene_count`, or `bundle_count`
 - `process_ratio`
 - `shuffle_seed`
 - `resume`
@@ -60,7 +59,7 @@ Likely fields:
 
 ### Notes
 
-- dataset-specific complete-unit count keys should support development-time reduced download passes without selecting partial units
+- dataset-local acquisition reduction should be expressed through each dataset entry's `selection` field, not through dataset-specific count keys
 - `process_ratio` should support development-time partial processing on already-downloaded data
 - `resume` should default toward interruption-tolerant behavior
 - `skip_known_errors` should default toward not retrying known-bad items blindly
@@ -89,6 +88,7 @@ Likely shared fields per dataset:
 
 - `enabled`
 - `hf_dataset_id`
+- `selection`
 - `revision`
 - `split` or `splits`
 - candidate-unit lists such as `environments`, `scenes`, or `bundles`
@@ -141,6 +141,7 @@ datasets:
   hypersim:
     enabled: false
     hf_dataset_id: GaussianWorld/Hypersim
+    selection: minimum_readable
 ```
 
 ## What Should Stay Global
@@ -162,6 +163,7 @@ These can reasonably vary per dataset:
 
 - whether the dataset is enabled
 - source Hugging Face dataset id
+- candidate pool fields such as `scenes`, `environments`, `bundles`, `trajectories`, `frames`, or `sequences`
 - revision or pinned source state
 - subset or split selection
 - camera-model hints when the source metadata is weak

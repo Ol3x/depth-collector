@@ -41,6 +41,9 @@ Before saving a processed sample as a PyTorch payload, the system should validat
 - arrays have expected dtypes or convertible dtypes
 - values are finite where finiteness is required
 
+This validation point protects a stable artifact contract.
+Changing the serialized payload format is a product-level contract change and should not be done implicitly as part of an implementation or environment fix.
+
 This should be one centralized validation path, not a repeated pattern in each dataset pipeline.
 
 ## Earlier Validation

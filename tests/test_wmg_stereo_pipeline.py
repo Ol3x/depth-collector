@@ -1,4 +1,5 @@
 import json
+import io
 import tarfile
 import tempfile
 import unittest
@@ -47,9 +48,9 @@ class WMGStereoPipelineTest(unittest.TestCase):
                 dataset_name: {
                     "enabled": True,
                     "hf_dataset_id": "princeton-vl/WMGStereo",
+                    "selection": "minimum_readable",
                     "release": "release_full",
                     "archives": ["seed0001.tar.gz"],
-                    "archive_count": 1,
                 }
             },
         }
@@ -123,7 +124,7 @@ class WMGStereoPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             pipeline = self._make_pipeline(tmp_dir)
             pipeline.dataset_config.options["archives"] = "*"
-            pipeline.dataset_config.options["archive_count"] = 2
+            pipeline.dataset_config.options["selection"] = "all"
             with patch.object(
                 pipeline,
                 "hf_list_repo_files",
@@ -150,6 +151,61 @@ class WMGStereoPipelineTest(unittest.TestCase):
                     ),
                 ],
             )
+
+    def test_minimum_readable_download_materializes_single_readable_sample_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            unit = WMGStereoArchiveUnit(
+                category="flying",
+                archive_name="seed0001.tar.gz",
+                repo_path="release_full/flying/seed0001.tar.gz",
+            )
+            local_archive_root = Path(tmp_dir) / "source_archives"
+            pipeline.dataset_config.options["local_archive_root"] = str(local_archive_root)
+            source_archive_path = local_archive_root / "release_full" / "flying" / "seed0001.tar.gz"
+            self._write_archive(source_archive_path)
+
+            pipeline.download_unit(unit)
+
+            archive_path = pipeline._archive_path(unit)
+            with tarfile.open(archive_path, "r:gz") as archive:
+                member_names = sorted(member.name for member in archive if member.isfile())
+            self.assertEqual(
+                member_names,
+                [
+                    "seed0001/frames/Image/camera_0/Image_0_0_0001_0.png",
+                    "seed0001/frames/camview/camera_0/camview_0_0_0001_0.npz",
+                    "seed0001/frames/camview/camera_1/camview_0_1_0001_0.npz",
+                    "seed0001/frames/disparity/camera_0/disparity_0_0_0001_0.npy",
+                ],
+            )
+
+    def test_minimum_readable_remote_download_uses_streaming_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir)
+            unit = WMGStereoArchiveUnit(
+                category="flying",
+                archive_name="seed0001.tar.gz",
+                repo_path="release_full/flying/seed0001.tar.gz",
+            )
+            with tempfile.TemporaryDirectory() as build_dir:
+                source_archive_path = Path(build_dir) / "seed0001.tar.gz"
+                self._write_archive(source_archive_path)
+                source_bytes = source_archive_path.read_bytes()
+
+            class _RemoteBytes(io.BytesIO):
+                def __enter__(self) -> "_RemoteBytes":
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> None:
+                    self.close()
+
+            with patch.object(pipeline, "hf_open_remote_file", return_value=_RemoteBytes(source_bytes)) as mocked_open:
+                pipeline.download_unit(unit)
+
+            mocked_open.assert_called_once()
+            archive_path = pipeline._archive_path(unit)
+            self.assertTrue(archive_path.exists())
 
     def test_extract_enumerate_and_build_sample(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

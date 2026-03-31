@@ -8,11 +8,11 @@ The table below is the cross-dataset summary to maintain as integrations and res
 It should prefer conservative statements over guessed precision; when a field is not yet verified, write
 `not yet confirmed`.
 
-| Dataset | Status | Environment | Acquisition Method | Overall Quality | Official Sample Count | Metric | Unit | Minimum Complete Download Unit | License |
+| Dataset | Status | Environment | Acquisition Method | Overall Quality | Official Sample Count | Metric | Unit | Minimum Readable Selection Path | License |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| [Hypersim](/home/olx2024/repos/depth-collector/docs/datasets/hypersim.md) | implemented | indoor synthetic | artist-authored synthetic renders with full scene/camera metadata | high | about 77.4k images | yes | meters | scene archive; current default config uses `scene_count` | not yet confirmed |
-| [TartanAir](/home/olx2024/repos/depth-collector/docs/datasets/tartanair.md) | implemented | mixed synthetic indoor/outdoor navigation scenes | synthetic rendered trajectories | high | not yet confirmed | yes | meters | complete environment+difficulty RGB/depth slice; current default config uses `environment_count` | BSD-3-Clause |
-| [TartanGround](/home/olx2024/repos/depth-collector/docs/datasets/tartanground.md) | implemented | mixed synthetic ground robotics scenes | synthetic rendered trajectories | high | not yet confirmed | yes | meters | complete environment/version/trajectory/camera RGB/depth slice; current default config uses `environment_count` | not yet confirmed |
+| [Hypersim](/home/olx2024/repos/depth-collector/docs/datasets/hypersim.md) | implemented | indoor synthetic | artist-authored synthetic renders with full scene/camera metadata | high | about 77.4k images | yes | meters | one scene archive selected through `selection: "minimum_readable"` | not yet confirmed |
+| [TartanAir](/home/olx2024/repos/depth-collector/docs/datasets/tartanair.md) | implemented | mixed synthetic indoor/outdoor navigation scenes | synthetic rendered trajectories | high | not yet confirmed | yes | meters | one complete environment+difficulty RGB/depth slice selected through `selection: "minimum_readable"` | BSD-3-Clause |
+| [TartanGround](/home/olx2024/repos/depth-collector/docs/datasets/tartanground.md) | implemented | mixed synthetic ground robotics scenes | synthetic rendered trajectories | high | not yet confirmed | yes | meters | one complete environment/version/trajectory/camera RGB/depth slice selected through `selection: "minimum_readable"` | not yet confirmed |
 | [MegaDepth](/home/olx2024/repos/depth-collector/docs/datasets/megadepth.md) | candidate | mostly outdoor Internet landmarks | Internet photos + SfM/MVS reconstruction | medium to high | 196 reconstructed locations (official) | no | not applicable | not yet confirmed; likely one scene if per-scene HF files are exposed, otherwise bundle-scale | CC BY 4.0 for depth/SfM outputs; original images retain their own licenses |
 | [Structured3D](/home/olx2024/repos/depth-collector/docs/datasets/structured3d.md) | candidate | indoor synthetic | synthetic interior renders | high | not yet confirmed | yes | meters | effectively full reconstructed archive, about 307 GB; 308 ~1 GB chunks are partial fragments, not complete units | restrictive / upstream Structured3D terms |
 | [Virtual KITTI 2](/home/olx2024/repos/depth-collector/docs/datasets/virtual_kitti_2.md) | implemented | outdoor synthetic driving | derivative VLBM/Flock4D-style archive package with RGB, dense depth, and per-frame camera metadata | high | not yet confirmed | yes | meters | one `vkitti2_vlbm.tar.gz` archive as the complete HF download unit; processing then selects one extracted sequence such as `Scene06_fog` for smoke runs; full reviewed package is about 8.2 GB across 50 sequences | not yet confirmed |
@@ -45,7 +45,7 @@ When prioritizing untackled candidate datasets, optimize jointly for:
 
 - high geometry quality
 - high quantity / coverage
-- small complete non-partial download units
+- small minimum readable selection paths
 
 That means tiny shards alone are not enough. A dataset with weak geometry should rank low even if it is easy to
 download, while a strategically strong dataset can still rank well if its acquisition unit is somewhat larger.
@@ -65,7 +65,7 @@ Notes:
 
 - `UrbanSyn`, `TopAir`, `DIODE subset train`, and `Virtual KITTI 2` are now implemented, so they are no longer part of the remaining candidate ranking.
 - `Structured3D` stays near the top because of likely very high quality and scale, even though its current HF mirror is
-  painful for non-partial acquisition; this is a strategic ranking, not a pure smoke-test ranking.
+  painful for minimum-readable smoke acquisition; this is a strategic ranking, not a pure smoke-test ranking.
 - `ARKitScenes` is intentionally not a target from the currently reviewed HF package because the available source
   appears to be the wrong artifact type for this repo.
 - `ToF-360` remains promising geometrically, but the live smoke run showed that its natural complete scene unit is much

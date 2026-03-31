@@ -23,3 +23,18 @@
   - camera intrinsics and extrinsics are available through the released SfM models
   - metric scale should be treated as not guaranteed; this is an inference from the acquisition method and should be validated against the actual released metadata before implementation
   - under the current project rule, non-metric MegaDepth exports should normalize radial distance into `[0, 1]`, with `1` used as the far / max bucket
+
+## Current Pipeline Direction
+
+- The repository includes a MegaDepth pipeline and config contract, but this dataset should still be treated as a candidate until the full live acquisition path is exercised more broadly.
+- The current pipeline model uses bundle downloads plus scene selection from scene-info metadata.
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means the smallest selected MegaDepth candidate set that still yields at least one readable sample with:
+  - source RGB
+  - usable depth or reconstruction-derived geometry
+  - camera metadata sufficient to derive canonical `ray_dir`
+- In the current pipeline shape, that usually means one scene from the ordered scene pool and one bundle from the ordered bundle pool.
+- `selection: "all"` means all selected scenes and bundles.
+- A ratio in `(0, 1]` means the corresponding prefix of the ordered candidate pools.

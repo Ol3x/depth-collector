@@ -10,10 +10,20 @@
 - Artifact risk: likely lower than many real datasets, but still requires actual sample inspection
 - Canonical conversion difficulty: medium
 - License on HF card: BSD-3-Clause
-- Status: candidate
+- Status: implemented
 - Priority tier: P1
 - Why it matters: large scale, repeated SOTA usage signal, and likely strong value for general geometric diversity
 - Known issues: HF package is very large and organized as environment/trajectory archives, so interruption-tolerant download and partial processing are essential
 - HF packaging notes: Hugging Face hosts a large full dataset with per-environment `Easy` and `Hard` folders and modality archives such as `image_left.zip`, `image_right.zip`, `depth_left.zip`, `depth_right.zip`, `seg_left.zip`, and flow files
 - Geometry notes: official docs explicitly specify pinhole cameras with `640x640` resolution, focal length `320`, principal point `(320, 320)`, zero distortion, and stereo baseline `0.25 m`
 - Pipeline notes: this is a strong future candidate for shared stereo/disparity-capable geometry tooling as well as monocular distance export
+
+## Minimum Readable Selection
+
+- `selection: "minimum_readable"` means one readable image/depth pair from the first selected environment/difficulty group.
+- The pipeline now inspects the remote zip archives and materializes tiny local archives containing only:
+  - one RGB member from `image_left.zip`
+  - one paired depth member from `depth_left.zip`
+- That keeps the existing download/extract stage model while making the downloaded source subset actually match one readable `(image, distance, ray_dir)` sample.
+- `selection: "all"` means the full ordered environment/difficulty pool.
+- A ratio in `(0, 1]` means the corresponding prefix of that pool.

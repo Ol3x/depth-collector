@@ -15,6 +15,9 @@ Every dataset pipeline should fit the same high-level lifecycle.
 9. Emit `metadata.json`.
 10. Run validation checks on the processed result.
 
+The `.pt` shard format is part of the repository's external contract.
+It should be treated as stable unless a user explicitly approves changing the artifact format and downstream compatibility expectations.
+
 ## Why This Matters
 
 Different datasets will need different parsing logic, but they should not invent different pipeline shapes. A common lifecycle keeps:

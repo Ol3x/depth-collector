@@ -10,7 +10,7 @@ This repository should be used from the `depth-collector` micromamba environment
 Create or update it from [environment.yml](/home/olx2024/repos/depth-collector/environment.yml), then run commands through that env explicitly:
 
 ```bash
-mamba env create -f environment.yml
+mamba env create --strict-channel-priority -f environment.yml
 mamba activate depth-collector
 python -m pip install -e .
 python -m pytest -q
@@ -19,10 +19,13 @@ python -m pytest -q
 If the environment already exists, update it with:
 
 ```bash
-mamba env update -n depth-collector -f environment.yml
+mamba env update --strict-channel-priority -n depth-collector -f environment.yml
 mamba activate depth-collector
 python -m pip install -e .
 ```
+
+The base environment is solved from conda-forge, while PyTorch is installed from the CUDA 12.8 pip wheels via `environment.yml`.
+That keeps the project on real PyTorch `.pt` payloads while avoiding the broken conda PyTorch builds we hit on this machine.
 
 ## CLI
 
@@ -89,23 +92,20 @@ dc visualize default
 dc status default
 ```
 
-For development smoke runs, the default config now uses dataset-specific non-partial download counts plus a small `process_ratio` so you can test the full workflow on a tiny subset first.
+For development smoke runs, the default config now uses dataset-specific `selection: "minimum_readable"` plus a small `process_ratio` so you can test the full workflow on a tiny subset first.
 
 The default config now includes both `tartanair` and `tartanground`, each with a narrow selection and small ratios so the multi-dataset workflow stays testable. It also includes a disabled `hypersim` entry for the next high-priority integration.
 
 If you want faster downloads and your connection can sustain it, increase `runtime.download_workers` in the project config. You can also override it per dataset with `datasets.<name>.download_workers`. The default is conservative.
 
-Download selection is now dataset-specific:
+Download selection is now dataset-specific through `datasets.<name>.selection`.
 
-- `datasets.tartanair.environments` + `datasets.tartanair.environment_count`
-- `datasets.tartanground.environments` + `datasets.tartanground.environment_count`
-- `datasets.hypersim.scenes` + `datasets.hypersim.scene_count`
-- `datasets.megadepth.bundles` + `datasets.megadepth.bundle_count`
+- `"minimum_readable"` means "choose the smallest dataset-native selection that still yields at least one readable `(image, distance, ray_dir)` sample"
+- `"all"` means "use the full discovered candidate pool"
+- a float in `(0, 1]` means "use that fraction of the ordered candidate pool", rounded up so a non-empty pool still yields at least one candidate
 
-Each count refers to complete non-partial units. A successful run will not intentionally leave partial environments, scenes, or bundles behind.
-For Tartan-family datasets, the count trims the shared pool of complete candidate slices, so a minimal setting selects the smallest complete RGB+depth slice from that pool rather than forcing every configured variation for one environment.
-
-Use `"*"` or `"all"` for a candidate-unit list to mean "discover all available units", then use the matching count field to limit how many complete units are downloaded.
+Candidate-unit lists such as `environments`, `scenes`, `bundles`, `trajectories`, `frames`, or `sequences` still define the pool being selected from.
+For Tartan-family datasets, `selection` trims the shared pool of complete candidate slices, so `"minimum_readable"` selects the first complete RGB+depth slice from that pool rather than forcing every configured variation for one environment.
 
 ## Configs
 

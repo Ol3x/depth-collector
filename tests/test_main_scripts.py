@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -18,10 +19,13 @@ class MainScriptsSmokeTest(unittest.TestCase):
         return Path(__file__).resolve().parents[1]
 
     def _python(self) -> str:
-        return "/home/olx2024/micromamba/envs/depth-collector/bin/python"
+        return sys.executable
 
     def _dc(self) -> str:
-        return "/home/olx2024/micromamba/envs/depth-collector/bin/dc"
+        return str(Path(sys.executable).with_name("dc"))
+
+    def _dc_cmd(self, *args: str) -> list[str]:
+        return [self._python(), "-m", "depth_collector.cli", *args]
 
     def _write_archive_sources(self, source_root: Path) -> None:
         image_archive = source_root / "neighborhood" / "Easy" / "image_left.zip"
@@ -76,8 +80,8 @@ class MainScriptsSmokeTest(unittest.TestCase):
                     "enabled": True,
                     "hf_dataset_id": "theairlabcmu/tartanair",
                     "download_workers": 1,
+                    "selection": "all",
                     "environments": ["neighborhood"],
-                    "environment_count": 1,
                     "difficulties": ["Easy"],
                     "modalities": ["image_left"],
                     "local_archive_root": str(source_root),
@@ -114,8 +118,8 @@ class MainScriptsSmokeTest(unittest.TestCase):
                 "megadepth": {
                     "enabled": True,
                     "hf_dataset_id": "MegaDepth",
+                    "selection": "minimum_readable",
                     "bundles": ["megadepth_bundle"],
-                    "bundle_count": 1,
                     "scene_info_dir": "scene_info",
                 }
             },
@@ -135,7 +139,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
 
             repo_root = self._repo_root()
             download_result = subprocess.run(
-                [self._dc(), "download", "default", "--config", str(config_path)],
+                self._dc_cmd("download", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -151,7 +155,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             (hf_cache_root / "hub" / "placeholder.txt").write_text("cache")
 
             subprocess.run(
-                [self._dc(), "extract", "default", "--config", str(config_path)],
+                self._dc_cmd("extract", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
             )
@@ -165,7 +169,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             (hf_cache_root / "hub").mkdir(parents=True, exist_ok=True)
             (hf_cache_root / "hub" / "placeholder.txt").write_text("cache")
             extract_keep_cache_result = subprocess.run(
-                [self._dc(), "extract", "default", "--config", str(config_path), "--keep-cache"],
+                self._dc_cmd("extract", "default", "--config", str(config_path), "--keep-cache"),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -175,7 +179,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertTrue(hf_cache_root.exists())
 
             status_result = subprocess.run(
-                [self._dc(), "status", "default", "--config", str(config_path)],
+                self._dc_cmd("status", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -185,13 +189,13 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertIn("[tartanair] archives_present=0/2", status_result.stdout)
 
             subprocess.run(
-                [self._dc(), "process", "default", "--config", str(config_path)],
+                self._dc_cmd("process", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
             )
 
             visualize_result = subprocess.run(
-                [self._dc(), "visualize", "default", "--config", str(config_path), "--max-samples", "1"],
+                self._dc_cmd("visualize", "default", "--config", str(config_path), "--max-samples", "1"),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -205,7 +209,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertEqual(visualization_paths[0].parent.name, "neighborhood__Easy")
 
             visualize_all_result = subprocess.run(
-                [self._dc(), "visualize", "default", "--config", str(config_path), "--all", "--samples-per-image", "1"],
+                self._dc_cmd("visualize", "default", "--config", str(config_path), "--all", "--samples-per-image", "1"),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -214,8 +218,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertIn("visualization summary", visualize_all_result.stdout)
 
             visualize_targeted_result = subprocess.run(
-                [
-                    self._dc(),
+                self._dc_cmd(
                     "visualize",
                     "default",
                     "--config",
@@ -224,7 +227,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
                     "tartanair",
                     "--max-samples",
                     "1",
-                ],
+                ),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -233,15 +236,14 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertIn("[tartanair] visualization summary", visualize_targeted_result.stdout)
 
             missing_dataset_result = subprocess.run(
-                [
-                    self._dc(),
+                self._dc_cmd(
                     "visualize",
                     "default",
                     "--config",
                     str(config_path),
                     "--dataset",
                     "urbansyn",
-                ],
+                ),
                 cwd=repo_root,
                 capture_output=True,
                 text=True,
@@ -250,7 +252,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertIn("is not enabled in the selected config", missing_dataset_result.stderr)
 
             conflict_result = subprocess.run(
-                [self._dc(), "visualize", "default", "--config", str(config_path), "--all", "--max-samples", "1"],
+                self._dc_cmd("visualize", "default", "--config", str(config_path), "--all", "--max-samples", "1"),
                 cwd=repo_root,
                 capture_output=True,
                 text=True,
@@ -283,7 +285,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertEqual(run_report["shard_count"], 2)
             self.assertEqual(run_report["error_stage_counts"], {})
             no_op_process_result = subprocess.run(
-                [self._dc(), "process", "default", "--config", str(config_path)],
+                self._dc_cmd("process", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -296,7 +298,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertEqual(metadata_after_no_op["shard_count"], 2)
 
             clean_process_result = subprocess.run(
-                [self._dc(), "clean_process", "default", "--config", str(config_path), "--yes"],
+                self._dc_cmd("clean_process", "default", "--config", str(config_path), "--yes"),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -309,7 +311,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             self.assertFalse((data_root / "default" / "metric" / "tartanair" / "state" / "enumeration_manifest.json").exists())
 
             rebuilt_process_result = subprocess.run(
-                [self._dc(), "process", "default", "--config", str(config_path)],
+                self._dc_cmd("process", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -325,7 +327,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest_payload))
             shutil.rmtree(data_root / "default" / "metric" / "tartanair" / "processed")
             recovered_process_result = subprocess.run(
-                [self._dc(), "process", "default", "--config", str(config_path)],
+                self._dc_cmd("process", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
@@ -355,7 +357,7 @@ class MainScriptsSmokeTest(unittest.TestCase):
 
             repo_root = self._repo_root()
             result = subprocess.run(
-                [self._dc(), "download", "default", "--config", str(config_path)],
+                self._dc_cmd("download", "default", "--config", str(config_path)),
                 cwd=repo_root,
                 check=True,
                 capture_output=True,
