@@ -1,7 +1,7 @@
 # depth-collector
 A dataset factory for Monocular Depth Estimation resarch.
 
-It builds pipelines to Hugging Face Hub and other public datasets in order to create an immense public, high quality, standardized monocular depth dataset.
+It builds pipelines to Hugging Face Hub and other public datasets in order to create an immense public, high quality, standardized monocular depth dataset with different camera models.
 
 ## Environment
 
